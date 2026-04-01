@@ -1,56 +1,48 @@
 # /dev iteration — Single Agent Invocation
 
-You are spawned by the orchestrator via `claude -p` to execute ONE iteration. Do one task, return a JSON result, exit.
+You are spawned by the orchestrator via `claude -p` to execute ONE iteration. Do one task, exit.
 
----
+## Project Context
 
-## Output Contract
+- **Working directory**: `/root/work/brpc`
+- **Issue repo**: `Mouriya-Emma/moat-browser`
+- **Loop workflow**: Follow `/root/work/brpc/CLAUDE.md` Steps 0–8 exactly.
 
-Your last line MUST be exactly one JSON object:
-
-```
-{"_tag": "pr_created", "issue": N, "repo": "owner/repo", "pr": N, "branch": "..."}
-{"_tag": "completed", "issue": N, "repo": "owner/repo", "pr": N}
-{"_tag": "blocked", "issue": N, "reason": "..."}
-{"_tag": "no_actionable_issue"}
-{"_tag": "split", "parent": N, "children": [N, ...]}
-{"_tag": "wip", "issue": N, "repo": "owner/repo", "branch": "...", "progress": "..."}
-{"_tag": "error", "message": "..."}
-```
+**Before exiting for ANY reason, you MUST print a one-line summary of what happened and why you are exiting.** The review agent has no other way to know what occurred. No silent exits.
 
 ---
 
 ## Step 0: Preflight Checks
 
-Before doing ANY work, verify preconditions. If any FAIL, return `error`.
+Before doing ANY work, verify preconditions. If any FAIL, print what failed and exit.
 
 ### Environment
 
 | Check | How | If fails |
 |---|---|---|
-| gh authenticated | `gh auth status` | → error |
-| GitHub API reachable | `gh api rate_limit --jq .rate.remaining` | → error |
-| API rate limit > 50 | same | → error |
+| gh authenticated | `gh auth status` | → exit |
+| GitHub API reachable | `gh api rate_limit --jq .rate.remaining` | → exit |
+| API rate limit > 50 | same | → exit |
 
 ### Per-repo
 
 | Check | How | If fails | Repair |
 |---|---|---|---|
-| Git repo | `git rev-parse --git-dir` | → error | — |
-| No stale lock | `ls .git/index.lock` | If >5min → remove | If fresh → error |
-| Not detached HEAD | `git symbolic-ref HEAD` | `git checkout $DEFAULT` | If fails → error |
-| Clean worktree | `git status --porcelain` | `git stash` | If fails → error |
+| Git repo | `git rev-parse --git-dir` | → exit | — |
+| No stale lock | `find .git/index.lock -mmin +5 2>/dev/null` | If found → remove | If fresh (<5min) → exit |
+| Not detached HEAD | `git symbolic-ref HEAD` | `git checkout $DEFAULT` | If fails → exit |
+| Clean worktree | `git status --porcelain` | `git stash` | If fails → exit |
 | main up to date | `git fetch && rev-list` | `git pull --ff-only` | — |
-| CLAUDE.md exists | `test -f CLAUDE.md` | → error | — |
-| Design doc accessible | Read from CLAUDE.md | → error | — |
-| Verify commands exist | Check binary in PATH | → error | — |
+| CLAUDE.md exists | `test -f CLAUDE.md` | → exit | — |
+| Design doc accessible | Read from CLAUDE.md | → exit | — |
+| Verify commands exist | Check binary in PATH | → exit | — |
 
 ### Issues
 
 | Check | How | If fails |
 |---|---|---|
-| Open issues exist | `gh issue list --state open --limit 1` | → no_actionable_issue |
-| At least one actionable | Exclude blocked/review/design-question | → no_actionable_issue |
+| Open issues exist | `gh issue list --state open --limit 1` | → exit |
+| At least one actionable | Exclude blocked/review/design-question | → exit |
 | No orphaned in-progress | Stale in-progress labels | Remove label (repair) |
 
 ---
@@ -67,10 +59,9 @@ Priority queue:
 2. Parent issue with open sub-issues
    → Smallest-number open sub-issue with dependencies met.
 
-3. Standalone issue with dependencies met
-   → Evaluate splitting. If needed → return split.
+3. Standalone issue with dependencies met.
 
-4. Nothing actionable → return no_actionable_issue.
+4. Nothing actionable → print "No actionable issue found" and exit.
 ```
 
 ---
@@ -83,12 +74,7 @@ The review agent posts guidance as issue comments. If you don't read them, you w
 
 ```bash
 # Read issue body AND all comments
-gh issue view $ISSUE -R "$ISSUE_REPO" --json body,title,labels,comments --jq '{
-  title: .title,
-  labels: [.labels[].name],
-  body: .body,
-  comments: [.comments[] | {author: .author.login, body: .body, createdAt: .createdAt}]
-}'
+gh issue view $ISSUE -R "$ISSUE_REPO" --json body,title,labels,comments
 ```
 
 **If there are review feedback comments**, they contain:
@@ -137,6 +123,8 @@ One issue = one deliverable.
 
 ## Step 5: Verify
 
+### 5a: CLAUDE.md verify commands
+
 Run ALL verify commands from THIS REPO'S CLAUDE.md, in order:
 
 1. typecheck (if available)
@@ -144,9 +132,26 @@ Run ALL verify commands from THIS REPO'S CLAUDE.md, in order:
 3. test (required)
 4. build (if available)
 
-If fails: fix (max 3 attempts). Still failing → return blocked with specific error.
+If fails: fix (max 3 attempts). Still failing → print the exact error and exit.
 
 **Do NOT modify test files to make tests pass. Fix the code.**
+
+### 5b: Issue checkpoint commands
+
+If the issue has an **Acceptance Criteria** table with checkpoint rows, execute each checkpoint command in order. For checkpoints with `Env: VM` or other remote environments, use SSH or the appropriate access method.
+
+```
+For each row in the Acceptance Criteria table:
+  1. Run the Command in the specified Env
+  2. Compare output against Expect
+  3. Print: "Checkpoint #N (<dimension>): PASS" or "Checkpoint #N (<dimension>): FAIL — <actual output>"
+```
+
+If a checkpoint fails: fix (max 3 attempts per checkpoint). Still failing → print which checkpoint failed with the actual output, and continue to the next checkpoint. Do NOT skip checkpoints silently.
+
+If the issue has an **Inherited Verification Obligations** table, execute those the same way. These are checkpoints deferred from earlier Phases — they MUST be executed, not deferred again.
+
+After all checkpoints, print a summary: "Checkpoints: X/Y passed (dimensions: function N/M, environment N/M, integration N/M, assumption N/M)".
 
 ---
 
@@ -162,7 +167,6 @@ git push origin $BRANCH
 
 If PR already exists (retry scenario):
 - Just push to the same branch. PR updates automatically.
-- Return `pr_created` with the existing PR number.
 
 If no PR yet:
 ```bash
@@ -176,8 +180,6 @@ Record progress:
 ```bash
 gh issue comment $ISSUE -R "$ISSUE_REPO" --body "Iteration update: PR $TARGET_REPO#$PR — <what was done>"
 ```
-
-Return `pr_created`.
 
 ---
 

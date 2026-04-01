@@ -3,19 +3,7 @@
 You are spawned via `claude -p` to convert an existing design into loop-executable format. You do NOT design. You adapt.
 
 **Input:** design documents + repos
-**Output:** GitHub Issues + per-repo CLAUDE.md + populated `.dev-state.json`
-
----
-
-## Output Contract
-
-Last line MUST be one JSON:
-
-```
-{"_tag": "ready", "issues": N, "repos": N}
-{"_tag": "need_design", "questions": ["...", "..."]}
-{"_tag": "error", "message": "..."}
-```
+**Output:** GitHub Issues + per-repo CLAUDE.md
 
 ---
 
@@ -44,19 +32,15 @@ A "design" is anything that specifies:
 
 ### need_design questions
 
-When no design doc is found, return questions the user needs to answer to produce one:
+When no design doc is found, ask the user:
 
-```json
-{"_tag": "need_design", "questions": [
-  "What does this project do? (one paragraph)",
-  "What are the main components and their responsibilities?",
-  "What technology stack for each component?",
-  "How do components communicate? (API, events, shared DB, etc.)",
-  "What repos are involved and what role does each play?"
-]}
-```
+- What does this project do? (one paragraph)
+- What are the main components and their responsibilities?
+- What technology stack for each component?
+- How do components communicate? (API, events, shared DB, etc.)
+- What repos are involved and what role does each play?
 
-The orchestrator surfaces these to the user. After the user answers, plan is re-invoked with the answers as context. Plan STILL doesn't design — it takes the user's answers as the design source.
+After the user answers, re-run plan with the answers as context. Plan STILL doesn't design — it takes the user's answers as the design source.
 
 ---
 
@@ -139,8 +123,10 @@ Read the design document. Extract tasks.
 - **Follow the design's structure** — if it has phases/sections/components, those become issues
 - **Dependency order** — issues must be executable in sequence
 - **One repo per issue** — if a phase spans repos, split into one issue per repo
-- **Acceptance criteria from design** — every issue gets testable criteria derived from the design
+- **Acceptance criteria from design** — every issue gets testable criteria derived from the design, expressed as executable checkpoints (see §2.2)
 - **Don't add your own ideas** — if the design doesn't mention it, don't create an issue for it
+- **Risk-first decomposition** — scan for third-party assumptions and cross-environment dependencies BEFORE structural decomposition. Create spikes (§2.5) for high-risk assumptions
+- **Completeness monotonicity** — when ordering issues, ensure that cumulative completeness (total passed checkpoints / total checkpoints across all issues so far) never decreases. Do not structure a plan where multiple implementation Phases precede the first environment or integration checkpoint
 
 ### 2.2 Issue Format
 
@@ -159,11 +145,38 @@ Each issue must contain enough context for the iteration agent to work independe
 <from design document — NOT your interpretation>
 
 ## Acceptance Criteria
-- [ ] <concrete, testable — derived from design>
-- [ ] <verify command passes>
+
+Each criterion is a checkpoint with dimension, command, environment, and expected result.
+Dimensions: `function` (code logic), `environment` (runs in target env), `integration` (output consumable by downstream), `assumption` (third-party behavior holds).
+
+| # | Dimension | Check | Command | Env | Expect |
+|---|-----------|-------|---------|-----|--------|
+| 1 | function | <what it verifies> | `<executable command>` | local / VM / CI | <expected output or exit code> |
+| 2 | environment | <what it verifies> | `<executable command>` | VM | <expected> |
+| 3 | integration | <what it verifies> | `<executable command>` | VM | <expected> |
+| 4 | assumption | <what it verifies> | `<executable command>` | VM | <expected> |
+
+Rules:
+- Every issue MUST have at least one checkpoint per relevant dimension. If an issue involves Docker, it MUST have an `environment` checkpoint. If it produces output consumed by another Phase, it MUST have an `integration` checkpoint. If it relies on third-party component behavior, it MUST have an `assumption` checkpoint.
+- Each checkpoint is independently verifiable — a failure at checkpoint N tells the iteration agent exactly what broke and where, so it can fix that specific step rather than retry blindly.
+- Checkpoints within a dimension should be ordered from simplest to most complex (e.g., "Dockerfile syntax" before "docker build" before "container starts" before "service responds").
+- Do NOT write checkpoints that cannot be executed in any available environment. If no environment can run a check, flag it and create a spike (see §2.5).
+
+## Inherited Verification Obligations
+
+If this issue inherits deferred checks from an earlier Phase, list them here:
+
+| From | Original # | Check | Command | Env | Expect |
+|------|-----------|-------|---------|-----|--------|
+| Phase N | ac-K | <what> | `<cmd>` | <env> | <expect> |
+
+Rules:
+- Inherited obligations count toward this issue's completeness (passed checkpoints / total checkpoints).
+- An obligation CANNOT be deferred more than once. If it was already deferred to reach this issue, plan must NOT create another issue to defer it further.
 
 ## Dependencies
 - Depends on: #<N> (<what it needs from that issue>)
+  - Required postconditions: <list specific checkpoint IDs from #N that must be passed>
 - Blocks: #<N> (<what depends on this>)
 ```
 
@@ -181,12 +194,67 @@ When an issue works in a different repo than the issue tracker:
 
 For each candidate issue:
 
+**Structural signals:**
+
 | Signal | Action |
 |---|---|
 | Design has sub-sections for this component | Split into sub-issues |
 | Task spans 2+ repos | Split: one per repo |
 | Task has clear layers (types → impl → API → test) | Split by layer |
 | Task is small and self-contained | Don't split |
+
+**Risk signals:**
+
+| Signal | Action |
+|---|---|
+| Task depends on undocumented behavior of a third-party component (e.g., a specific browser's CDP implementation, an OS package's runtime behavior) | Extract a **spike** (§2.5) as a prerequisite issue |
+| Task assumes cross-network or cross-environment connectivity (e.g., host → container, container → container) | Extract an **integration spike** to verify in target environment |
+| Design doc uses speculative language ("should work", "expected to", "presumably") for a technical claim | Extract a **spike** to produce concrete evidence |
+
+Risk signals take priority over structural signals. A spike must be created and resolved BEFORE the implementation issue it de-risks.
+
+### 2.5 Spike Issues
+
+A spike is a timeboxed verification task that validates a technical assumption before committing to implementation. Spikes are NOT implementation — they produce evidence, not production code.
+
+**Spike issue format:**
+
+```markdown
+## Goal
+Verify assumption: <the specific technical claim to validate>
+
+## Context
+- **Repo**: `owner/repo` (path: `/local/path`)
+- **Design doc**: `<path>` section <N>
+- **Assumption source**: <quote from design doc or inferred from architecture>
+
+## Verification Steps
+1. <concrete step to test the assumption>
+2. <concrete step>
+3. ...
+
+## Acceptance Criteria
+
+| # | Dimension | Check | Command | Env | Expect |
+|---|-----------|-------|---------|-----|--------|
+| 1 | assumption | <what it verifies> | `<cmd>` | VM | <expect> |
+
+## Outcomes
+- **If passed**: Assumption holds. Proceed to implementation issue #<N>.
+- **If failed**: Create a `design-question` issue with the evidence. Do NOT proceed to implementation.
+
+## Dependencies
+- Blocks: #<N> (implementation issue that relies on this assumption)
+```
+
+**When to create spikes:**
+- The assumption involves a third-party binary/package whose behavior is not guaranteed by its documentation
+- The assumption has never been tested in the target environment
+- Failure of the assumption would invalidate the architecture (not just require a workaround)
+
+**When NOT to create spikes:**
+- The behavior is well-documented and widely known (e.g., "nginx serves static files")
+- The assumption can be trivially verified as part of implementation (e.g., "bun can import this package")
 
 ---
 
@@ -265,48 +333,11 @@ Each modifiable repo gets a CLAUDE.md. Content is DETECTED or EXTRACTED, not inv
 
 ---
 
-## Step 5: Populate .dev-state.json
+## Step 5: Validate
 
 ```bash
-cat > .dev-state.json << 'EOF'
-{
-  "project": "<name>",
-  "issueRepo": "<owner/repo>",
-  "repos": [
-    {
-      "id": "<short-id>",
-      "owner": "<owner>",
-      "name": "<repo>",
-      "role": "<app|iac|...>",
-      "path": "<absolute local path>",
-      "defaultBranch": "<main|master>",
-      "issueTarget": <true if this repo hosts the issue tracker>,
-      "verifyCommands": {
-        "test": "<detected>",
-        "lint": "<detected>",
-        "typecheck": "<detected>",
-        "build": "<detected>"
-      }
-    }
-  ],
-  "state": {"_tag": "idle"},
-  "iteration": 0,
-  "consecutiveRetries": 0,
-  "history": []
-}
-EOF
-```
-
----
-
-## Step 6: Validate
-
-```bash
-# State file valid
-cat .dev-state.json | jq . > /dev/null
-
 # Issues created
-ISSUE_COUNT=$(gh issue list -R "$ISSUE_REPO" --state open --limit 1 | wc -l)
+ISSUE_COUNT=$(gh issue list -R "$ISSUE_REPO" --state open --json number --jq 'length')
 [ "$ISSUE_COUNT" -gt 0 ] || echo "FAIL"
 
 # CLAUDE.md in each modifiable repo
@@ -317,7 +348,7 @@ done
 # At least one verify command works per repo (where code exists)
 ```
 
-Return `{"_tag": "ready", "issues": N, "repos": M}`
+验证通过后报告创建了多少 issues 和 repos。
 
 ---
 
@@ -329,3 +360,7 @@ Return `{"_tag": "ready", "issues": N, "repos": M}`
 - **Cross-repo conventions are per-repo** — IaC repo follows IaC patterns, not app patterns
 - **Existing CLAUDE.md is preserved** — merge, don't overwrite
 - **If no design exists, ask** — return `need_design`, don't guess
+- **Every checkpoint must be executable** — if you write a checkpoint, it must have a command that an agent can run. "docker build succeeds" without a command is not a checkpoint
+- **Spikes before implementation** — if a task depends on an unverified third-party assumption, the spike MUST be created and ordered before the implementation issue
+- **Dimensional coverage is mandatory** — do not create issues that only have `function` checkpoints when the task involves Docker, networking, or third-party components
+- **Deferred verification becomes an inherited obligation** — if a checkpoint cannot be verified in the current issue's environment, plan must place it in the Inherited Verification Obligations section of a downstream issue. Do not leave it unassigned
