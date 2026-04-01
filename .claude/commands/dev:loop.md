@@ -1,9 +1,9 @@
 # /dev:loop — Start the dev loop
 
-Run the orchestrator to start the iteration loop in the current project.
+This is a long-running background task. Run the command with NO timeout (or maximum timeout if none is not possible: 600000ms).
 
 ```bash
-autotask $ARGUMENTS
+autotask $ARGUMENTS || /root/.bun/bin/bun run /root/work/autotask/src/loop.ts $ARGUMENTS
 ```
 
 - No argument: run indefinitely until review agent stops the loop
