@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 /**
  * dev loop — spawn iteration agent, then review agent, repeat.
  *
@@ -13,11 +14,15 @@ import { spawn } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
-const ROOT = resolve(import.meta.dir, "..")
-const LOOP_FILE = resolve(ROOT, ".dev-loop")
-const TRACE_FILE = resolve(ROOT, ".dev-trace.txt")
-const ITERATION_PROMPT = resolve(ROOT, "dev-iter.md")
-const REVIEW_PROMPT = resolve(ROOT, "dev-review.md")
+// Prompts ship with this package
+const PKG_ROOT = resolve(import.meta.dir, "..")
+const ITERATION_PROMPT = resolve(PKG_ROOT, "dev-iter.md")
+const REVIEW_PROMPT = resolve(PKG_ROOT, "dev-review.md")
+
+// Working files live in the target project (cwd)
+const CWD = process.cwd()
+const LOOP_FILE = resolve(CWD, ".dev-loop")
+const TRACE_FILE = resolve(CWD, ".dev-trace.txt")
 
 async function main() {
 	const maxIterations = process.argv[2] ? parseInt(process.argv[2], 10) : Infinity

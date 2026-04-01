@@ -2,8 +2,10 @@
 	"name": "autotask",
 	"private": true,
 	"type": "module",
+	"bin": {
+		"autotask": "src/loop.ts"
+	},
 	"scripts": {
-		"loop": "bun run src/loop.ts",
 		"typecheck": "bun x tsc --noEmit"
 	},
 	"devDependencies": {
