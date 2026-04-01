@@ -6,7 +6,7 @@
  *   review agent deletes .dev-loop → stop
  *   user deletes .dev-loop → stop
  *
- * Prompts are in dev-loop.md and dev-review.md. Agents read everything themselves.
+ * Prompts are in dev-iter.md and dev-review.md. Agents read everything themselves.
  */
 
 import { spawn } from "node:child_process"
@@ -16,7 +16,7 @@ import { resolve } from "node:path"
 const ROOT = resolve(import.meta.dir, "..")
 const LOOP_FILE = resolve(ROOT, ".dev-loop")
 const TRACE_FILE = resolve(ROOT, ".dev-trace.txt")
-const ITERATION_PROMPT = resolve(ROOT, "dev-loop.md")
+const ITERATION_PROMPT = resolve(ROOT, "dev-iter.md")
 const REVIEW_PROMPT = resolve(ROOT, "dev-review.md")
 
 async function main() {

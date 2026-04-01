@@ -1,4 +1,4 @@
-# coder-loop
+# autotask
 
 无人值守开发循环。给定一份设计文档，自动把它变成 GitHub PR，持续迭代直到完成。
 
@@ -6,7 +6,7 @@
 
 ### 核心模型：信号生成 → 信号产生 → 信号消费
 
-coder-loop 本质上是一个迭代收敛系统。它能否收敛到正确结果，取决于每次迭代是否产生足够的**信号**来驱动下一次迭代的方向。
+autotask 本质上是一个迭代收敛系统。它能否收敛到正确结果，取决于每次迭代是否产生足够的**信号**来驱动下一次迭代的方向。
 
 这个认识来自 2024-2025 年四组研究的共同发现：
 
@@ -17,14 +17,14 @@ coder-loop 本质上是一个迭代收敛系统。它能否收敛到正确结果
 | 任务分解为什么导致失败？ | Agent Failure Taxonomy (2025) | planning phase defects 是 agent 任务失败的首要类别（约 50% 的失败源于此） |
 | 怎么防止无限低质量推进？ | VMAO (2025) | completeness threshold + diminishing returns 检测 |
 
-基于这些发现，coder-loop 将迭代系统的职责拆分为三个独立环节，分别对应三个 prompt：
+基于这些发现，autotask 将迭代系统的职责拆分为三个独立环节：
 
 ```
-plan（信号结构定义）→ loop（信号产生）→ review（信号消费与判定）
+plan（信号结构定义）→ iter（信号产生）→ review（信号消费与判定）
 ```
 
 - **plan** 定义"要检查什么"——将验收标准编译为带维度标注的可执行 checkpoint 序列
-- **loop** 产生信号——执行 checkpoint 命令，报告每个 checkpoint 的 pass/fail 及实际输出
+- **iter** 产生信号——执行 checkpoint 命令，报告每个 checkpoint 的 pass/fail 及实际输出
 - **review** 消费信号并判定——审计 checkpoint 执行结果，检查维度覆盖，决定迭代方向
 
 ### 四个设计决策
@@ -33,7 +33,7 @@ plan（信号结构定义）→ loop（信号产生）→ review（信号消费�
 
 传统做法是在 issue 中写 `- [ ] docker build 成功`。这是自然语言描述，不是可执行的验证。iteration agent 可以跳过它、重新解释它、或声称完成了它。
 
-coder-loop 的 plan 将每条验收标准编译为 `{dimension, command, env, expect}` 四元组。iteration agent 无法"跳过"一个有具体 SSH 命令的 checkpoint——它要么执行了，要么没执行，trace 里看得到。
+autotask 的 plan 将每条验收标准编译为 `{dimension, command, env, expect}` 四元组。iteration agent 无法"跳过"一个有具体 SSH 命令的 checkpoint——它要么执行了，要么没执行，trace 里看得到。
 
 **2. 维度覆盖强制**
 
@@ -68,57 +68,26 @@ loop.ts 是纯状态机：创建 `.dev-loop` → 交替 spawn agent → 检查 `
 
 ---
 
-## 工作方式
+## 用法
 
-### 两个阶段
+### 阶段一：规划（跑一次）
 
-**阶段一：初始化（跑一次）**
+```
+/dev:plan
+```
 
-`/dev:plan` 读取设计文档，产出：
+读取设计文档，产出：
 - **GitHub Issues**：带 checkpoint 表格、维度标注、spike issue、inherited obligations 的任务
 - **CLAUDE.md**（每个 repo 一份）：每次迭代前 agent 读的上下文
 
-**阶段二：循环**
+### 阶段二：循环
 
 ```
-while .dev-loop 存在:
-    iteration agent  →  选 issue，实现，执行 checkpoint，提 PR
-    review agent     →  审计 checkpoint 结果，检查维度覆盖，决定继续/重试/停止
+/dev:loop        # 无限循环
+/dev:loop 10     # 最多 10 轮
 ```
 
-### 三个角色
-
-| 角色 | Prompt | 职责 |
-|---|---|---|
-| plan agent | `dev-plan.md` | 设计文档 → Issues + CLAUDE.md。定义 checkpoint 结构、维度覆盖、spike、obligations |
-| iteration agent | `dev-loop.md` | 每轮选一个 issue，实现，执行 checkpoint 命令，报告 per-dimension 结果，提 PR |
-| review agent | `dev-review.md` | 审计 checkpoint 执行证据，检查维度覆盖，评估 inherited obligations，决定循环方向 |
-
-review agent 是唯一有权停止循环的角色。
-
-### 设计约定
-
-**iteration agent 没有返回值协议。** 不管发生什么，iteration agent 直接退出。orchestrator 不解析 agent 输出。
-
-**trace 只记录 iteration agent 的输出。** review agent 读 trace 审计——不相信 iteration agent 的自我报告，验证 checkpoint 命令是否实际执行、结果是否匹配 expect。
-
-**停止循环的唯一方式是 `rm .dev-loop`。** 只有 review agent 执行这个操作。
-
----
-
-## 用法
-
-```bash
-# 1. 初始化：在 Claude Code 里运行
-/dev:plan
-
-# 2. 启动循环
-bun run loop        # 无限循环
-bun run loop 10     # 最多 10 轮
-
-# 3. 随时停止
-rm .dev-loop
-```
+循环交替运行 iteration agent 和 review agent。删除 `.dev-loop` 可随时停止。
 
 ---
 
@@ -127,8 +96,9 @@ rm .dev-loop
 | 文件 | 说明 |
 |---|---|
 | `src/loop.ts` | 循环状态机。创建 `.dev-loop`，交替 spawn 两个 agent，捕获输出写 trace |
-| `dev-plan.md` | plan agent prompt。信号结构定义：checkpoint 表格、维度、spike、obligations |
-| `dev-loop.md` | iteration agent prompt。信号产生：实现 + 执行 checkpoint + 报告结果 |
+| `.claude/commands/dev:plan.md` | plan skill。信号结构定义：checkpoint 表格、维度、spike、obligations |
+| `.claude/commands/dev:loop.md` | loop skill。启动迭代循环 |
+| `dev-iter.md` | iteration agent prompt。信号产生：实现 + 执行 checkpoint + 报告结果 |
 | `dev-review.md` | review agent prompt。信号消费：审计 checkpoint、维度覆盖、obligations |
 
 ## References
