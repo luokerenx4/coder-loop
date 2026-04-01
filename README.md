@@ -96,10 +96,15 @@ loop.ts 是纯状态机：创建 `.dev-loop` → 交替 spawn agent → 检查 `
 | 文件 | 说明 |
 |---|---|
 | `src/loop.ts` | 循环状态机。创建 `.dev-loop`，交替 spawn 两个 agent，捕获输出写 trace |
-| `.claude/commands/dev:plan.md` | plan skill。信号结构定义：checkpoint 表格、维度、spike、obligations |
-| `.claude/commands/dev:loop.md` | loop skill。启动迭代循环 |
 | `dev-iter.md` | iteration agent prompt。信号产生：实现 + 执行 checkpoint + 报告结果 |
 | `dev-review.md` | review agent prompt。信号消费：审计 checkpoint、维度覆盖、obligations |
+
+Skills（全局安装在 `~/.claude/commands/`）：
+
+| Skill | 说明 |
+|---|---|
+| `/dev:plan` | plan skill。信号结构定义：checkpoint 表格、维度、spike、obligations |
+| `/dev:loop` | loop skill。启动迭代循环 |
 
 ## References
 
