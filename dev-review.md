@@ -157,6 +157,8 @@ gh issue close <ISSUE> -R <ISSUE_REPO>
 gh issue edit <ISSUE> -R <ISSUE_REPO> --remove-label in-progress
 ```
 
+**Do NOT close issues labeled `bug` or `design-question`.** These issues have lifecycles independent of the iteration loop — they are closed only when the underlying problem is resolved or the design question is answered, not when a single PR is merged.
+
 Check parent sub-issue completion:
 ```bash
 PARENT=$(gh api repos/<ISSUE_REPO>/issues/<N>/parent -H "X-GitHub-Api-Version: 2026-03-10" --jq .number 2>/dev/null)

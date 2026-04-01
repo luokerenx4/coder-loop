@@ -13,9 +13,9 @@ import { spawn } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
-const LOOP_FILE = ".dev-loop"
-const TRACE_FILE = ".dev-trace.txt"
 const ROOT = resolve(import.meta.dir, "..")
+const LOOP_FILE = resolve(ROOT, ".dev-loop")
+const TRACE_FILE = resolve(ROOT, ".dev-trace.txt")
 const ITERATION_PROMPT = resolve(ROOT, "dev-loop.md")
 const REVIEW_PROMPT = resolve(ROOT, "dev-review.md")
 
@@ -34,8 +34,12 @@ async function main() {
 
 		// 1. Run iteration agent
 		const iterPrompt = await readFile(ITERATION_PROMPT, "utf-8")
-		const iterTrace = await runAgent(iterPrompt)
+		const { output: iterTrace, code: iterCode } = await runAgent(iterPrompt)
 		await writeFile(TRACE_FILE, iterTrace)
+
+		if (iterCode !== 0) {
+			log(`Iteration agent crashed (exit ${iterCode}). Letting review decide.`)
+		}
 
 		// If loop file was deleted during iteration, stop
 		if (!(await exists(LOOP_FILE))) {
@@ -44,8 +48,16 @@ async function main() {
 		}
 
 		// 2. Run review agent — it reads the trace file itself
-		const reviewPrompt = await readFile(REVIEW_PROMPT, "utf-8")
-		await runAgent(reviewPrompt)
+		const reviewPromptRaw = await readFile(REVIEW_PROMPT, "utf-8")
+		const reviewPrompt = reviewPromptRaw
+			.replaceAll("{{TRACE_FILE}}", TRACE_FILE)
+			.replaceAll("{{LOOP_FILE}}", LOOP_FILE)
+		const { output: _, code: reviewCode } = await runAgent(reviewPrompt)
+
+		if (reviewCode !== 0) {
+			log(`Review agent crashed (exit ${reviewCode}). Stopping.`)
+			break
+		}
 
 		// Review agent decides: delete .dev-loop → stop, leave it → continue
 		if (!(await exists(LOOP_FILE))) {
@@ -63,9 +75,9 @@ async function main() {
 	log("Loop ended.")
 }
 
-async function runAgent(prompt: string): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const child = spawn("claude", ["-p", prompt], {
+async function runAgent(prompt: string): Promise<{ output: string; code: number }> {
+	return new Promise((resolve) => {
+		const child = spawn("claude", ["--dangerously-skip-permissions", "-p", prompt], {
 			stdio: ["ignore", "pipe", "pipe"],
 		})
 
@@ -77,13 +89,7 @@ async function runAgent(prompt: string): Promise<string> {
 		child.on("close", (code) => {
 			const stdout = Buffer.concat(out).toString("utf-8")
 			const stderr = Buffer.concat(err).toString("utf-8")
-
-			if (code !== 0) {
-				log(`Agent exited ${code}: ${stderr.slice(0, 200)}`)
-			}
-
-			// Return full output as trace regardless of exit code
-			resolve(stdout + "\n" + stderr)
+			resolve({ output: stdout + "\n" + stderr, code: code ?? 1 })
 		})
 	})
 }
