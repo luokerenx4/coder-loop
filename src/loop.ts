@@ -28,9 +28,9 @@ const REVIEW_PROMPT = resolve(PKG_ROOT, "dev-review.md")
 const CWD = process.cwd()
 const LOOP_FILE = resolve(CWD, ".dev-loop")
 const TRACE_FILE = resolve(CWD, ".dev-trace.txt")
-const LOG_FILE = resolve(CWD, ".dev-loop.log")
+const LOG_FILE = `/tmp/autotask-${process.pid}.${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.log`
 
-const EXCLUDE_ENTRIES = [".dev-loop", ".dev-trace.txt", ".dev-loop.log"]
+const EXCLUDE_ENTRIES = [".dev-loop", ".dev-trace.txt"]
 
 let logStream: WriteStream
 
@@ -82,7 +82,7 @@ async function main() {
 	await ensureGitExclude()
 
 	// Create the loop file — this is the "on" switch
-	await writeFile(LOOP_FILE, `started: ${new Date().toISOString()}\npid: ${process.pid}\nlog: ${LOG_FILE}\n`)
+	await writeFile(LOOP_FILE, `started: ${new Date().toISOString()}\npid: ${process.pid}\nlog: ${LOG_FILE}\ncwd: ${CWD}\n`)
 	log("Loop file created. Delete .dev-loop to stop.")
 
 	let iteration = 0
