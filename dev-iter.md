@@ -66,14 +66,13 @@ Priority queue:
 
 ---
 
-## Step 2: Read Issue — MUST INCLUDE COMMENTS
+## Step 2: Read Issue + Dependency Chain
 
-**CRITICAL: When reading an issue, you MUST read the comments too.**
+**CRITICAL: You must read comments AND the full dependency chain.**
 
-The review agent posts guidance as issue comments. If you don't read them, you will repeat the same mistakes and get rejected again.
+### 2a: Read current issue
 
 ```bash
-# Read issue body AND all comments
 gh issue view $ISSUE -R "$ISSUE_REPO" --json body,title,labels,comments
 ```
 
@@ -84,6 +83,24 @@ gh issue view $ISSUE -R "$ISSUE_REPO" --json body,title,labels,comments
 - Constraints (what NOT to do)
 
 **Follow the most recent review feedback.** It is your primary guidance for this iteration.
+
+### 2b: Read dependency chain (recursive)
+
+Extract `Depends on:` entries from the issue body. For each dependency, read its body + comments + linked PR. Then read THAT issue's dependencies, recursively, until there are no more upstream issues.
+
+```bash
+# For each dependency issue:
+gh issue view $DEP_ISSUE -R "$ISSUE_REPO" --json body,comments,state
+# Find linked PRs:
+gh pr list -R "$TARGET_REPO" --search "$DEP_ISSUE" --state merged --json number,body --limit 3
+```
+
+**Extract constraints and findings from the entire chain.** Any upstream issue or PR may contain discoveries that override or constrain your current task. Examples:
+- A spike proved a runtime incompatibility (e.g. "Bun WebSocket doesn't work, use Node.js")
+- An earlier phase found a workaround (e.g. "Chrome ignores --remote-debugging-address, use socat")
+- A review comment added a requirement not in the original issue body
+
+**If an upstream finding contradicts your current issue's Technical Approach or Acceptance Criteria, the upstream finding wins.** Adapt your implementation accordingly and note the deviation in your PR.
 
 ---
 
