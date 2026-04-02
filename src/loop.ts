@@ -7,11 +7,14 @@
  *   review agent deletes .dev-loop → stop
  *   user deletes .dev-loop → stop
  *
+ * Usage:
+ *   autotask [maxIterations] [--resume-from=iter|review]
+ *
  * Prompts are in dev-iter.md and dev-review.md. Agents read everything themselves.
  */
 
 import { spawn } from "node:child_process"
-import { readFile, writeFile } from "node:fs/promises"
+import { appendFile, readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
 // Prompts ship with this package
@@ -24,32 +27,77 @@ const CWD = process.cwd()
 const LOOP_FILE = resolve(CWD, ".dev-loop")
 const TRACE_FILE = resolve(CWD, ".dev-trace.txt")
 
+const EXCLUDE_ENTRIES = [".dev-loop", ".dev-trace.txt"]
+
+async function ensureGitExclude() {
+	const excludePath = resolve(CWD, ".git", "info", "exclude")
+	try {
+		const content = await readFile(excludePath, "utf-8")
+		const missing = EXCLUDE_ENTRIES.filter((e) => !content.split("\n").includes(e))
+		if (missing.length > 0) {
+			await appendFile(excludePath, "\n" + missing.join("\n") + "\n")
+		}
+	} catch {
+		// no .git or no info/exclude — not a git repo or fresh init, skip
+	}
+}
+
+type ResumeFrom = "iter" | "review"
+
+function parseArgs(): { maxIterations: number; resumeFrom: ResumeFrom | null } {
+	let maxIterations = Infinity
+	let resumeFrom: ResumeFrom | null = null
+
+	for (const arg of process.argv.slice(2)) {
+		if (arg.startsWith("--resume-from=")) {
+			const val = arg.slice("--resume-from=".length)
+			if (val !== "iter" && val !== "review") {
+				console.error(`Invalid --resume-from value: ${val}. Use "iter" or "review".`)
+				process.exit(1)
+			}
+			resumeFrom = val
+		} else if (/^\d+$/.test(arg)) {
+			maxIterations = parseInt(arg, 10)
+		}
+	}
+
+	return { maxIterations, resumeFrom }
+}
+
 async function main() {
-	const maxIterations = process.argv[2] ? parseInt(process.argv[2], 10) : Infinity
+	const { maxIterations, resumeFrom } = parseArgs()
+
+	await ensureGitExclude()
 
 	// Create the loop file — this is the "on" switch
 	await writeFile(LOOP_FILE, `started: ${new Date().toISOString()}\n`)
 	log("Loop started. Delete .dev-loop to stop.")
 
 	let iteration = 0
+	let skipIter = resumeFrom === "review"
 
-	while (await exists(LOOP_FILE) && iteration < maxIterations) {
+	while ((await exists(LOOP_FILE)) && iteration < maxIterations) {
 		iteration++
 		log(`--- Iteration ${iteration} ---`)
 
-		// 1. Run iteration agent
-		const iterPrompt = await readFile(ITERATION_PROMPT, "utf-8")
-		const { output: iterTrace, code: iterCode } = await runAgent(iterPrompt)
-		await writeFile(TRACE_FILE, iterTrace)
+		// 1. Run iteration agent (skip on first iteration if resuming from review)
+		if (skipIter) {
+			log("Resuming from review — skipping iteration agent.")
+			skipIter = false
+		} else {
+			const iterPrompt = await readFile(ITERATION_PROMPT, "utf-8")
+			const { output: iterTrace, code: iterCode } = await runAgent(iterPrompt)
+			await writeFile(TRACE_FILE, iterTrace)
 
-		if (iterCode !== 0) {
-			log(`Iteration agent crashed (exit ${iterCode}). Letting review decide.`)
-		}
+			if (iterCode !== 0) {
+				log(`Iteration agent crashed (exit ${iterCode}). Letting review decide.`)
+			}
 
-		// If loop file was deleted during iteration, stop
-		if (!(await exists(LOOP_FILE))) {
-			log("Loop file removed during iteration. Stopping.")
-			break
+			// If loop file was deleted during iteration, stop
+			if (!(await exists(LOOP_FILE))) {
+				log("Loop file removed during iteration. Stopping.")
+				break
+			}
 		}
 
 		// 2. Run review agent — it reads the trace file itself

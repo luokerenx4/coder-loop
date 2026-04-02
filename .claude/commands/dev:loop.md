@@ -8,5 +8,7 @@ autotask $ARGUMENTS || /root/.bun/bin/bun run /root/work/autotask/src/loop.ts $A
 
 - No argument: run indefinitely until review agent stops the loop
 - Pass a number to limit iterations, e.g. `/dev:loop 10`
+- `--resume-from=review`: skip iteration agent on first round, go straight to review (use when iteration completed but review never ran)
+- `--resume-from=iter`: start from iteration agent as normal (default behavior, explicit)
 
 The loop alternates between the iteration agent and the review agent. Delete `.dev-loop` at any time to stop.
