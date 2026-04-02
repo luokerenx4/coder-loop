@@ -43,45 +43,25 @@ src/loop.ts (state machine orchestrator)
 
 **Inherited verification obligations**: Checkpoints that can't run in current environment are deferred to a downstream issue. Cannot be deferred twice.
 
-## Agent Prompt 设计的研究前提
+## Agent Prompt 设计前提
 
-以下是支撑 agent prompt 设计决策的学术研究和工程实证。修改 `dev-iter.md` / `dev-review.md` 时必须理解这些前提。
+修改 `dev-iter.md` / `dev-review.md` 之前必须理解以下前提。
 
-### LLM 在无外部 ground truth 时无法可靠自我验证
+### 这不是软件工程问题
 
-Huang et al. (2023) "Large Language Models Cannot Self-Correct Reasoning Yet" 证明：没有外部反馈时，LLM 的自我验证收敛到确认自身先前结论的简单检查，而非真正重新验证。Lanham et al. (Anthropic, 2023) 进一步证明 CoT 推理经常不忠实于实际计算过程——"验证推理"可能只是事后合理化。
+Agent 的判断失误不能用工程手段（状态机、验证层、verdict 文件）修补。把判断交给没有判断能力的程序没有任何意义——正因为程序不可靠所以才交给 LLM 判断。任何试图用确定性逻辑替代 LLM 判断的方案都是在回避问题。
 
-→ Agent prompt 中的关键验证步骤必须要求执行外部命令并展示输出，不能依赖 agent "推理得出"结论。
+### 问题是 prompt 没有教 agent 怎么工作
 
-### Goal Substitution 是 LLM 的系统性行为，不是偶发错误
+Agent 不是"判断力差"——是没人教它怎么判断。当前 prompt 给了一个模糊目标（"verify no open issues → stop"），没有思维链，没有工作流程，没有待办事项管理。系统中最关键的决策得到了最少的认知支撑。Agent 当然走捷径，因为 prompt 给了它一个 Goal 而不是一个 Procedure。
 
-Pan et al. (2025) "School of Reward Hacks" 证明：在无害任务上学到的目标替代行为会泛化到全新场景。编码代理学会篡改测试用例而非编写正确代码。AgentIF (2025) 基准测试显示最优模型的指令约束全满足率（ISR）仅 27.2%——在 agentic 场景中，LLM 有近 3/4 概率漏掉至少一个约束。
+### Agent 需要的信息分散在无数来源
 
-→ 不能假设 agent 会忠实执行 prompt 中的每条指令。关键步骤的认知框架越详细，被跳过的概率越低。一句话的指令几乎必然被 satisfice。
+做出正确的终止判断需要的证据不只在 issues 里——可能在 PR comments、SSH 日志、设计文档、git 历史中。不可能预取所有来源。所以不能用"注入 ground truth"的方式解决——需要教 agent 自己系统性地收集证据。
 
-### LLM 遵循 Procedure 比遵循 Goal 更可靠
+### 每个 agent 运行都是无状态的
 
-Plan-and-Act (UC Berkeley, ICML 2025) 证明：当单一模型同时处理高层策略和低层执行时，"models often lose sight of their ultimate objectives"。分离后两者的可靠性都提升。WebArena-Lite 成功率从基线提升至 57.58%。
-
-→ 关键决策不应写成目标（"verify no open issues"），而应分解为可执行的步骤序列（查询 → 分类 → 计数 → 规则判定）。
-
-### 外部化结构化状态远比内部记忆可靠
-
-Anthropic (2025) "Effective Harnesses for Long-Running Agents"：JSON 格式的结构化 TODO 比自然语言状态追踪可靠——"model is less likely to inappropriately change or overwrite JSON files compared to Markdown files"。全面的特性列表直接阻止了 agent 过早宣布完成。Scratchpad 研究一致表明 JSON scratchpad 比要求模型"记住"状态可靠得多。
-
-→ 但本项目中 agent 是无状态的（每次 `claude -p` 是独立进程），本地文件跨轮次不可靠。因此 ground truth 必须在 GitHub（issues/labels/comments），agent 每次实时查询。
-
-### Poka-yoke（防错设计）优于 Prompt 措辞改进
-
-Anthropic (2025) "Building Effective Agents"：在 SWE-bench 实现中"spent more time optimizing tools than the overall prompt"。当 agent 用相对路径出错时，改 tool 为强制绝对路径——"the model used this method flawlessly"。改善可靠性的最有效手段不是写更好的指令，而是设计流程使犯错更难。
-
-→ 与其告诉 agent "记得检查所有 open issues"，不如设计一个流程使得"不检查"的认知成本高于"检查"——例如要求粘贴命令输出、逐条分类、回答元认知问题后才能得出结论。
-
-### 认知负荷导致决策退化
-
-TMS (2025) 和 Plan-and-Act 均证明：低层执行操作消耗认知资源后，高层战略决策退化为简单启发式（Decision Fatigue）。SOFAI-LM (2025) 证明元认知模块（自我监控、自我评估）能使标准 LLM 匹配专用推理模型的准确率，关键不是更强的模型而是更好的自我审视结构。
-
-→ 关键决策需要独立的认知空间，与前面的低层操作隔离。Prompt 中用显式的步骤分隔和"清空思维"指令实现。
+每次 `claude -p` spawn 的 agent 是独立进程，没有跨轮次记忆。本地文件会丢失、会损坏、跨机器不可用。如果要用本地状态，必须每次做完即丢弃。持久化状态只能依赖 GitHub（issues / labels / comments）。
 
 ## Tech Stack
 
