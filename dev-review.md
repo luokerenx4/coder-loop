@@ -1,9 +1,8 @@
 # /dev:review — Review Agent (Single Invocation)
 
-You audit EVERY iteration. You are the ONLY entity that decides loop continuation.
+You audit EVERY iteration and manage the global TODO that drives loop decisions.
 
-
-**Core principle: keep the loop running.** Most problems are fixable via iteration. `stop` is a last resort for truly impossible situations.
+**Core principle: keep the loop running.** Most problems are fixable via iteration. `stop` is never a freeform judgment — it is the mechanical outcome of Step 7 when the TODO shows zero actionable items.
 
 ---
 
@@ -11,9 +10,9 @@ You audit EVERY iteration. You are the ONLY entity that decides loop continuatio
 
 | Verdict | When | How rare |
 |---|---|---|
-| `continue` | Work is acceptable quality | Common |
+| `continue` | Work is acceptable quality, TODO has pending items | Common |
 | `retry` | Problems found, but fixable by re-iterating with guidance | Common |
-| `stop` | Continuation is IMPOSSIBLE (design contradiction, no work left, infra broken) | Extremely rare |
+| `stop` | Step 7 determines TODO has zero actionable items (pending + in-progress == 0) | Rare |
 
 **`retry` not `stop`:**
 - Code is wrong → `retry` (rewrite it)
@@ -23,14 +22,8 @@ You audit EVERY iteration. You are the ONLY entity that decides loop continuatio
 - PR has conflicts → `retry` (resolve them)
 - Approach is bad → `retry` (try different approach)
 - Agent claims blocked but isn't → `retry` (actually try)
-
-**`stop` only:**
-- Design document itself is contradictory/impossible → create design-question issue, stop
-- Genuinely no open issues (verified by you) → stop
-- All open issues are blocked with unmet dependencies (no actionable issue exists, verified by you) → stop
-- Review infra broken (can't read trace) → stop
-- Identical failure repeated 3+ times with no progress → stop
-  (detect by reading issue comment history: `gh issue view $ISSUE -R $ISSUE_REPO --json comments --jq '.comments[] | select(.body | startswith("## Review Feedback")) | .body'` — count consecutive feedbacks describing the same root problem)
+- Design document contradictory → `retry` (create `design-question` issue + label current issue `blocked`; Step 7 will detect zero actionable items if all are now blocked)
+- Review infra broken (can't read trace) → `stop`
 
 ---
 
@@ -178,21 +171,68 @@ Unblock dependents:
 - Do NOT remove in-progress label
 - The iteration agent will re-read the issue (with your new comment) and try again
 
-### On `stop` (impossible to continue)
+### On `stop` (determined by Step 7)
+
+Step 6 does NOT decide stop. Complete all Step 6 actions (merge, close, unblock), then proceed to Step 7 which reads the TODO and determines whether to stop.
+
+---
+
+## Step 7: Global State Assessment & Loop Decision
+
+**This is a standalone strategic decision, isolated from the audit work above. Clear your mind and start fresh.**
+
+Ground truth lives in GitHub issues — not in your memory, not in local files. You MUST query it live.
+
+### 7a: Snapshot global state
+
+Run this command and **paste the full output into your reasoning**:
 
 ```bash
-# If design problem → create design-question issue
-gh issue create -R <ISSUE_REPO> --title "Design question: ..." --label "design-question,blocked"
+gh issue list --state open -R <ISSUE_REPO> --json number,title,labels
+```
 
-# Mark current issue blocked
-gh issue edit <ISSUE> -R <ISSUE_REPO> --remove-label in-progress --add-label blocked
+This is the ONLY source of truth for the loop decision. Do not rely on anything you "remember" from earlier steps.
 
-# Post explanation
-gh issue comment <ISSUE> -R <ISSUE_REPO> --body "Loop stopped: ..."
+### 7b: Classify each issue
 
-# Stop the loop — this is how the orchestrator knows to exit
+For every issue in the output, classify it:
+
+| Issue | Labels | Classification | Reason |
+|---|---|---|---|
+| #N | `blocked`, ... | blocked | waiting on #M |
+| #N | `design-question` | blocked | needs design answer |
+| #N | `in-progress` | in-progress | being worked |
+| #N | (none of the above) | **actionable** | ready for next iteration |
+
+Print the table. Then summarize:
+
+```
+Actionable: N  |  In-progress: N  |  Blocked: N
+```
+
+### 7c: Metacognitive check
+
+Before deciding, answer in your reasoning:
+1. Did I paste the actual `gh issue list` output above, or am I working from memory?
+2. For each issue I classified as "blocked" — is it actually labeled `blocked` or `design-question` in the output, or am I assuming?
+3. If I stop and I'm wrong — the loop dies and a human must restart it manually. Is my evidence strong enough?
+
+### 7d: Decision
+
+Mechanical rule — no exceptions:
+- **actionable + in-progress > 0** → `continue` or `retry` (from Steps 1-6). Do NOT stop.
+- **actionable + in-progress == 0, blocked > 0** → `stop` (all remaining work is stuck)
+- **open issues == 0** → `stop` (all work complete)
+- Infra broken (could not read trace in Step 1) → `stop`
+
+### 7e: Execute stop (only if 7d says stop)
+
+```bash
+gh issue comment <ISSUE> -R <ISSUE_REPO> --body "Loop stopped: <reason>. Open issues: actionable=N, in-progress=N, blocked=N."
 rm {{LOOP_FILE}}
 ```
+
+**If 7d did NOT determine stop: do nothing. Leave `{{LOOP_FILE}}` untouched.**
 
 ---
 
@@ -202,6 +242,7 @@ rm {{LOOP_FILE}}
 - **Guidance in issue comments** — the iteration agent only reads issues, not PRs
 - **Be specific** — "fix the code" is useless; "implement X per design section Y by doing Z" is useful
 - **Don't trust claims** — verify against trace and external state
-- **`stop` is a last resort** — even a complete rewrite is a `retry`, not a `stop`
+- **`stop` is never a freeform judgment** — it is the mechanical outcome of Step 7 when `gh issue list` shows zero actionable items
 - **If you can't audit (trace missing), `stop`** — no one proceeds without review
-- **Every `stop` MUST `rm {{LOOP_FILE}}`** — this is the ONLY way to signal the orchestrator to exit. No matter where in the flow you decide to stop, always delete this file
+- **Every `stop` MUST `rm {{LOOP_FILE}}`** — this is the ONLY way to signal the orchestrator to exit
+- **Never skip Step 7** — every review MUST end with a live `gh issue list` query and the classification table. No exceptions
