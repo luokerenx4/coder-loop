@@ -161,6 +161,7 @@ Rules:
 - Each checkpoint is independently verifiable — a failure at checkpoint N tells the iteration agent exactly what broke and where, so it can fix that specific step rather than retry blindly.
 - Checkpoints within a dimension should be ordered from simplest to most complex (e.g., "Dockerfile syntax" before "docker build" before "container starts" before "service responds").
 - Do NOT write checkpoints that cannot be executed in any available environment. If no environment can run a check, flag it and create a spike (see §2.5).
+- **Checkpoint-Approach alignment**: For each key structural decision in Technical Approach (interface shape, module boundary, state machine transition, error mapping, naming convention), there must be at least one checkpoint that would FAIL if the agent implemented it a different way. Example: if Technical Approach specifies a `dockerFetch` wrapper for all Docker API calls, add a checkpoint that verifies the wrapper exists or is used. If Technical Approach defines a state machine with 6 states, add a checkpoint that verifies all transitions. If a structural decision truly cannot be checkpointed, move it to a `## Constraints` section in the issue with explicit rationale — but this should be rare.
 
 ## Inherited Verification Obligations
 
@@ -256,6 +257,34 @@ Verify assumption: <the specific technical claim to validate>
 - The behavior is well-documented and widely known (e.g., "nginx serves static files")
 - The assumption can be trivially verified as part of implementation (e.g., "bun can import this package")
 
+### 2.6 Adversarial Validation
+
+Before creating issues, stress-test each issue from the iteration agent's perspective. This is the plan phase's quality gate — like the writing pipeline's 对抗检验.
+
+**Rule**: The reviewer reads ONLY the issue body — not the design document. If the issue alone isn't sufficient to guide correct implementation, the design doc won't save it. The agent reads CLAUDE.md as injected system context and the issue via `gh issue view` — injected context has higher cognitive weight. When they conflict, the agent will follow CLAUDE.md.
+
+For each issue:
+
+**1. Shortcut simulation**: What is the minimum-effort path to passing all checkpoints? Does that path also satisfy Technical Approach? If the agent can pass every checkpoint while ignoring a key structural decision (e.g., skipping the wrapper, collapsing the state machine, using a different module boundary), you have a missing checkpoint. Add it.
+
+**2. Confusion mapping**: What terms in this issue could the agent confuse with similar terms in CLAUDE.md, the design doc, or other issues? Common confusion patterns:
+- Renaming (issue says "CLI" but CLAUDE.md or earlier issues say "SDK")
+- Narrowing (issue covers one module but shares a name with a broader concept)
+- Tech choice (issue says "ws" but ecosystem defaults to "socket.io")
+
+For each confusion risk, add a one-line disambiguation in the issue body at point of use — not in a footnote, not in a separate section. The agent must encounter the disambiguation while reading, not have to seek it out.
+
+**3. Implicit knowledge audit**: What does this issue assume the agent already knows that isn't written anywhere in the issue? Examples:
+- Why Chrome for Testing instead of Debian Chromium? (the CDP session bug)
+- Why `fetch + Unix socket` instead of `dockerode`? (design decision)
+- Why `_tag` not `type` as discriminant for some ADTs?
+
+If the reason is important enough that getting it wrong would waste an iteration, state it in the issue. One sentence is enough.
+
+**4. CLAUDE.md coherence**: If CLAUDE.md describes a concept that this issue redefines, narrows, or uses differently, flag it. After all issues are drafted, CLAUDE.md must be updated (Step 4) to match the current terminology. Stale terms in CLAUDE.md will anchor the agent's thinking in the wrong direction.
+
+**Gate**: Fix every gap found before creating issues. Do not defer to the iteration or review agent — they cannot fix what plan got wrong.
+
 ---
 
 ## Step 3: Create Issues on GitHub
@@ -331,9 +360,13 @@ Each modifiable repo gets a CLAUDE.md. Content is DETECTED or EXTRACTED, not inv
 
 **If repo already has CLAUDE.md**: merge, don't overwrite. Add project context, keep existing conventions.
 
+**CLAUDE.md-Issue coherence**: After drafting all issues, re-read CLAUDE.md and verify that every term used in CLAUDE.md matches the issues. If an issue narrows, renames, or redefines a concept (e.g., issue says "CLI" where CLAUDE.md says "SDK"), update CLAUDE.md to use the current correct term or explicitly disambiguate both. CLAUDE.md is injected as system context when agents are spawned — stale or ambiguous terms there will override what the issue says, because injected context has higher cognitive weight than tool-fetched content.
+
 ---
 
 ## Step 5: Validate
+
+### 5.1 Existence checks
 
 ```bash
 # Issues created
@@ -347,6 +380,16 @@ done
 
 # At least one verify command works per repo (where code exists)
 ```
+
+### 5.2 Coherence checks
+
+After creating all issues and CLAUDE.md, run these checks:
+
+1. **Terminology scan**: Read CLAUDE.md. For each technical term (component name, library name, pattern name), search all created issues. Flag any term used differently across CLAUDE.md and issues, or across issues. Fix before finishing.
+
+2. **Checkpoint-Approach spot check**: Pick the 2-3 most complex issues. For each, list the key structural decisions in Technical Approach. Verify each has a checkpoint that would fail under a different implementation. If gaps found, add checkpoints.
+
+3. **Dependency chain walk**: Starting from the first issue (no dependencies), walk the dependency chain to the last. At each step, verify the `Required postconditions` actually match checkpoint IDs in the upstream issue. A broken reference means the dependency is unenforceable.
 
 验证通过后报告创建了多少 issues 和 repos。
 
@@ -364,3 +407,6 @@ done
 - **Spikes before implementation** — if a task depends on an unverified third-party assumption, the spike MUST be created and ordered before the implementation issue
 - **Dimensional coverage is mandatory** — do not create issues that only have `function` checkpoints when the task involves Docker, networking, or third-party components
 - **Deferred verification becomes an inherited obligation** — if a checkpoint cannot be verified in the current issue's environment, plan must place it in the Inherited Verification Obligations section of a downstream issue. Do not leave it unassigned
+- **Adversarial validation is mandatory** — every issue must pass §2.6 before creation. If the minimum-effort path to passing all checkpoints doesn't require following Technical Approach, you have missing checkpoints
+- **CLAUDE.md is the agent's mental model** — stale or ambiguous terms in CLAUDE.md will override what issues say. Keep it current. This is not a documentation task — it directly affects agent behavior
+- **Disambiguate at point of use** — when a term could be confused, clarify it inline in the issue body where the agent will encounter it while reading, not in a separate section it might skip
