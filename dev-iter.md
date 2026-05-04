@@ -14,8 +14,6 @@ You are spawned by the orchestrator via `claude -p` to execute exactly one itera
 - State file: `{{STATE_FILE}}`
 - Current issue handoff file: `{{CURRENT_ISSUE_FILE}}`
 - Evidence directory: `{{EVIDENCE_DIR}}`
-- Review policy: `{{REVIEW_POLICY}}`
-- Auto merge enabled: `{{AUTO_MERGE_ENABLED}}`
 - Browser evidence required: `{{REQUIRE_BROWSER_EVIDENCE}}`
 
 - Issue run mode: `{{ISSUE_RUN_MODE}}`
@@ -54,11 +52,11 @@ You MUST NOT:
 - merge PRs,
 - close issues,
 - delete `{{LOOP_FILE}}`,
-- mark work `ready_for_human_merge`, `done`, `moot`, or final `blocked` in `{{STATE_FILE}}`,
+- mark work `done`, `moot`, or final `blocked` in `{{STATE_FILE}}`,
 - treat human review as the loop review stage,
 - stage `.coder-loop/`, `.dev-loop`, or `.dev-trace.txt` into feature commits.
 
-If you believe the issue is blocked, record the blocker in the issue handoff and print it in the summary. The review agent will audit and decide whether to mark the state blocked or request retry.
+If you believe the issue is blocked, already satisfied, invalid, duplicate, parent/wrapper-only, moot, or otherwise should be skipped, record the evidence in the issue handoff and print it in the summary. The review agent will audit and decide the final state transition.
 
 ---
 
@@ -128,7 +126,7 @@ For issue `#{{ISSUE}}`:
 - If the issue is already satisfied on `{{BASE_BRANCH}}`, gather evidence rather than making unnecessary code changes.
 - If the issue is a parent/wrapper/moot issue, gather evidence and record the classification in handoff; do not implement unrelated child work.
 
-Most recent review feedback on the issue is primary guidance for retries.
+When no implementation PR exists, the most recent review feedback on the issue is primary guidance for retries. Once a PR exists, use the latest PR review/comment as the retry instruction.
 
 ---
 

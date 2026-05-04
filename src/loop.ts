@@ -32,7 +32,6 @@ const QUEUE_STATUSES = [
 	"changes_requested",
 	"blocked",
 	"moot",
-	"ready_for_human_merge",
 	"done",
 ] as const
 const ACTIONABLE_STATUSES = ["queued", "in_progress", "changes_requested"] as const
@@ -41,7 +40,6 @@ let logStream: WriteStream | null = null
 
 type QueueStatus = (typeof QUEUE_STATUSES)[number]
 type ActionableStatus = (typeof ACTIONABLE_STATUSES)[number]
-type ReviewPolicy = "comment-only" | "merge-if-enabled"
 type LoopPhase = "iteration" | "review"
 type AgentLabel = "iter" | "review"
 
@@ -81,8 +79,6 @@ type RawArgs = {
 	workflowPath: string | null
 	statePath: string | null
 	repository: string | null
-	reviewPolicy: ReviewPolicy | null
-	autoMerge: boolean | null
 	requireBrowserEvidence: boolean | null
 	once: boolean
 	dryRun: boolean
@@ -97,8 +93,6 @@ type LoopConfig = {
 	issueDir: string | null
 	evidenceDir: string | null
 	logDir: string | null
-	reviewPolicy: ReviewPolicy | null
-	autoMerge: boolean | null
 	requireAgentBrowserScreenshots: boolean | null
 	claudeBinary: string | null
 	claudeExtraArgs: string[]
@@ -118,8 +112,6 @@ type LoopOptions = {
 	logFile: string
 	repository: string
 	baseBranch: string
-	reviewPolicy: ReviewPolicy
-	autoMerge: boolean
 	requireBrowserEvidence: boolean
 	claudeBinary: string
 	claudeExtraArgs: string[]
@@ -158,8 +150,6 @@ function parseArgs(): RawArgs {
 		workflowPath: null,
 		statePath: null,
 		repository: null,
-		reviewPolicy: null,
-		autoMerge: null,
 		requireBrowserEvidence: null,
 		once: false,
 		dryRun: false,
@@ -195,14 +185,6 @@ function parseArgs(): RawArgs {
 			case "--repo":
 				raw.repository = readFlagValue(args, index, inlineValue, name)
 				if (inlineValue === null) index++
-				break
-			case "--review-policy":
-				raw.reviewPolicy = parseReviewPolicy(readFlagValue(args, index, inlineValue, name))
-				if (inlineValue === null) index++
-				break
-			case "--auto-merge":
-				rejectInlineValue(inlineValue, name)
-				raw.autoMerge = true
 				break
 			case "--require-browser-evidence":
 				rejectInlineValue(inlineValue, name)
@@ -241,11 +223,6 @@ function rejectInlineValue(value: string | null, name: string): void {
 	if (value !== null) fail(`${name} does not accept a value`)
 }
 
-function parseReviewPolicy(value: string): ReviewPolicy {
-	if (value === "comment-only" || value === "merge-if-enabled") return value
-	fail(`Invalid review policy: ${value}. Use "comment-only" or "merge-if-enabled".`)
-}
-
 async function main() {
 	const rawArgs = parseArgs()
 	const targetCwd = resolve(rawArgs.targetCwd ?? process.cwd())
@@ -269,7 +246,7 @@ async function main() {
 	logStream = createWriteStream(options.logFile, { flags: "a" })
 	log(`=== coder-loop started (pid=${process.pid}, cwd=${options.targetCwd}) ===`)
 	log(`Config: maxIterations=${formatMaxIterations(options.maxIterations)}`)
-	log(`Repo=${options.repository}, reviewPolicy=${options.reviewPolicy}, autoMerge=${options.autoMerge}`)
+	log(`Repo=${options.repository}`)
 	log(`Prompt files: iter=${ITERATION_PROMPT}, review=${REVIEW_PROMPT}`)
 	log(`Workflow=${options.workflowPath}`)
 	log(`State=${options.statePath}`)
@@ -405,8 +382,6 @@ function buildOptions(targetCwd: string, configPath: string, raw: RawArgs, confi
 	if (!repository) fail("Repository is required. Set --repo or .coder-loop/config.json repository.")
 
 	const maxIterations = raw.once ? 1 : (raw.maxIterations ?? Number.POSITIVE_INFINITY)
-	const reviewPolicy = raw.reviewPolicy ?? config.reviewPolicy ?? "comment-only"
-	const autoMerge = raw.autoMerge ?? config.autoMerge ?? false
 	const requireBrowserEvidence = raw.requireBrowserEvidence ?? config.requireAgentBrowserScreenshots ?? false
 	const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")
 
@@ -424,8 +399,6 @@ function buildOptions(targetCwd: string, configPath: string, raw: RawArgs, confi
 		logFile: resolve(logDir, `autotask-${process.pid}.${timestamp}.log`),
 		repository,
 		baseBranch: config.baseBranch ?? "main",
-		reviewPolicy,
-		autoMerge,
 		requireBrowserEvidence,
 		claudeBinary: config.claudeBinary ?? "claude",
 		claudeExtraArgs: config.claudeExtraArgs,
@@ -443,10 +416,8 @@ async function loadConfig(path: string): Promise<LoopConfig> {
 	})
 	const parsed: unknown = JSON.parse(raw)
 	const root = expectRecord(parsed, "config")
-	const review = optionalRecord(root, "review")
 	const evidence = optionalRecord(root, "evidence")
 	const claude = optionalRecord(root, "claude")
-	const reviewPolicy = review ? optionalReviewPolicy(review, "policy") : null
 
 	return {
 		repository: optionalString(root, "repository"),
@@ -457,8 +428,6 @@ async function loadConfig(path: string): Promise<LoopConfig> {
 		issueDir: optionalString(root, "issueDir"),
 		evidenceDir: optionalString(root, "evidenceDir"),
 		logDir: optionalString(root, "logDir"),
-		reviewPolicy,
-		autoMerge: review ? optionalBoolean(review, "autoMerge") : null,
 		requireAgentBrowserScreenshots: evidence ? optionalBoolean(evidence, "requireAgentBrowserScreenshots") : null,
 		claudeBinary: claude ? optionalString(claude, "binary") : null,
 		claudeExtraArgs: claude ? (optionalStringArray(claude, "extraArgs") ?? []) : [],
@@ -595,8 +564,6 @@ function renderPrompt(template: string, options: LoopOptions, context: RenderCon
 		["{{LOG_DIR}}", options.logDir],
 		["{{TRACE_FILE}}", options.traceFile],
 		["{{LOOP_FILE}}", options.loopFile],
-		["{{REVIEW_POLICY}}", options.reviewPolicy],
-		["{{AUTO_MERGE_ENABLED}}", String(options.autoMerge)],
 		["{{REQUIRE_BROWSER_EVIDENCE}}", String(options.requireBrowserEvidence)],
 		["{{ISSUE_RUN_MODE}}", context.issueRun.mode],
 		["{{RECOVERY_MODE}}", context.issueRun.mode],
@@ -759,11 +726,6 @@ function requiredQueueStatus(record: Record<string, unknown>, key: string): Queu
 	const value = requiredString(record, key)
 	if (QUEUE_STATUSES.includes(value as QueueStatus)) return value as QueueStatus
 	fail(`${key} has invalid queue status: ${value}`)
-}
-
-function optionalReviewPolicy(record: Record<string, unknown>, key: string): ReviewPolicy | null {
-	const value = optionalString(record, key)
-	return value === null ? null : parseReviewPolicy(value)
 }
 
 function requiredLoopPhase(record: Record<string, unknown>, key: string): LoopPhase {

@@ -16,8 +16,6 @@ You are spawned by the orchestrator after every iteration. You audit the iterati
 - Evidence directory: `{{EVIDENCE_DIR}}`
 - Trace file: `{{TRACE_FILE}}`
 - Loop file: `{{LOOP_FILE}}`
-- Review policy: `{{REVIEW_POLICY}}`
-- Auto merge enabled: `{{AUTO_MERGE_ENABLED}}`
 - Browser evidence required: `{{REQUIRE_BROWSER_EVIDENCE}}`
 
 - Issue run mode: `{{ISSUE_RUN_MODE}}`
@@ -52,13 +50,16 @@ The orchestrator must not decide whether the iteration succeeded. You must audit
 Verdicts:
 
 - `retry`: the selected issue remains actionable; write precise feedback and set state to `changes_requested`.
-- `continue`: the selected issue is acceptable for the configured policy; update state and let the loop move to the next actionable issue.
+- `accepted`: all required review phases pass. For PR-backed work, publish acceptance on the PR, merge it with `gh pr merge <PR_NUMBER> -R {{REPO}} --squash --delete-branch`, and set state to `done` only after the merge succeeds. Without a PR, use `accepted` only when live evidence proves the issue is already satisfied on `{{BASE_BRANCH}}`; comment on the issue with the evidence and set state to `done`.
+- `skip`: the issue is invalid, duplicate, parent/wrapper-only, moot, no-code, or explicitly out of scope; comment on the issue with the reason and set state to `moot`.
 - `blocked`: a real external dependency prevents progress; write why and set state to `blocked`.
 - `stop`: no actionable/in-progress/changes-requested items remain, or review infrastructure is broken.
 
-`stop` is mechanical. Do not stop just because code is bad, evidence is weak, tests failed, PR conflicts exist, or the iteration claimed blocked without proof. Those are `retry` unless all remaining work is truly non-actionable.
+`stop` is mechanical. Do not stop just because code is bad, evidence is weak, tests failed, PR conflicts exist, merge failed, or the iteration claimed blocked/skipped without proof. Those are `retry` unless all remaining work is truly non-actionable.
 
 Use `blocked` instead of repeated `retry` when the iteration proves a required local/runtime dependency is unavailable in the current environment and rerunning immediately cannot create the missing evidence. Examples: required binaries such as `dtach` are absent, required external services are unreachable, or required credentials/access are missing. The iteration must have attempted the relevant command/query and recorded the blocker in the trace or handoff; otherwise treat the blocker claim as unproven and use `retry`.
+
+Use `skip` only after independently verifying the issue should not produce implementation work. Parent/umbrella issues are skipped only when the children are complete or the issue is purely organizational; otherwise retry with precise feedback for the actionable child/slice.
 
 ---
 
@@ -150,7 +151,7 @@ Reject unless live PR metadata and diff review show:
 - PR does not weaken tests.
 - PR follows target project conventions.
 - Required GitHub checks are passing. Pending, failing, missing, or unknown checks are not mergeable evidence.
-- GitHub mergeability is clean enough for the configured merge policy.
+- GitHub mergeability is clean enough to merge immediately.
 
 ---
 
@@ -158,8 +159,8 @@ Reject unless live PR metadata and diff review show:
 
 Choose the feedback target before updating state:
 
-- If a live implementation PR exists for `#{{ISSUE}}`, all `retry`, `continue`, and merge-result feedback must be posted on that PR. Prefer `gh pr review <PR_NUMBER> -R {{REPO}} --request-changes --body ...` for `retry` and `gh pr review <PR_NUMBER> -R {{REPO}} --comment --body ...` for acceptance. If GitHub rejects a formal self-review, post an ordinary PR comment on the same PR; do not fall back to the issue.
-- Post on the GitHub issue only when there is no implementation PR, the issue topic itself is disputed, the issue is blocked/moot/no-code, or the current PR is being explicitly closed as invalid and a replacement is needed.
+- If a live implementation PR exists for `#{{ISSUE}}`, all `retry`, `accepted`, `blocked`, and merge-result feedback must be posted on that PR. Prefer `gh pr review <PR_NUMBER> -R {{REPO}} --request-changes --body ...` for `retry` and `gh pr review <PR_NUMBER> -R {{REPO}} --comment --body ...` for acceptance. If GitHub rejects a formal self-review, post an ordinary PR comment on the same PR; do not fall back to the issue.
+- Post on the GitHub issue only when there is no implementation PR, the issue topic itself is disputed, the issue is blocked/skipped/no-code, or the current PR is being explicitly closed as invalid and a replacement is needed.
 - Do not post PR-related review results only to the issue. The issue handoff is local bookkeeping; it is not a substitute for GitHub PR review.
 
 For `retry` when a PR exists, submit a PR review before updating state:
@@ -214,7 +215,9 @@ EOF
 
 For `blocked`, comment on the PR if one exists and the blocker concerns the implementation/verification of that PR; otherwise comment on the issue. Include the external dependency and why retrying immediately will not help.
 
-For `continue`, always publish a brief review result on the PR when a PR exists. The acceptance summary must state that PR evidence was sufficient before code review and list the decisive evidence layers. If a PR exists and review policy is `merge-if-enabled` with auto merge enabled, first post the acceptance summary on the PR, then merge the PR with `gh pr merge <PR_NUMBER> -R {{REPO}} --squash --delete-branch` after confirming checks/evidence/mergeability pass. If merge is unavailable because checks are pending, required reviews are missing, or GitHub reports non-mergeable state, use `retry` with exact PR feedback instead of waiting for a human. If there is no PR, comment on the issue with the accepted classification and update state accordingly.
+For `skip`, comment on the issue unless a live PR must be explicitly abandoned as invalid; in that case also comment on the PR. Include the verified reason the issue should be `moot` and why no implementation PR should be merged.
+
+For `accepted`, always publish a brief review result before updating state. The acceptance summary must state that PR evidence was sufficient before code review and list the decisive evidence layers. If a PR exists, post the acceptance summary on the PR, then run `gh pr merge <PR_NUMBER> -R {{REPO}} --squash --delete-branch`. If merge is unavailable because checks are pending, required reviews are missing, conflicts exist, mergeability is unknown, or GitHub reports any merge error, use `retry` with exact PR feedback instead of waiting for a human. If there is no PR, comment on the issue with the already-satisfied evidence before marking `done`.
 
 ---
 
@@ -225,12 +228,13 @@ Update `{{STATE_FILE}}` as the source of queue progress.
 For the selected issue item:
 
 - `retry` → `status: "changes_requested"`; keep branch/PR fields if known; clear `current`.
+- `accepted` with a PR → publish acceptance, merge the PR successfully, then set `status: "done"`, set PR number if known, and clear `current`.
+- `accepted` without a PR → only for already-satisfied-on-`{{BASE_BRANCH}}` evidence; comment on the issue, set `status: "done"`, and clear `current`.
+- `skip` → `status: "moot"`; record the reason in handoff; clear `current`.
 - `blocked` → `status: "blocked"`; record blocker in handoff; clear `current`.
-- `continue` under `comment-only` → `status: "ready_for_human_merge"`; set PR number if known; clear `current`.
-- `continue` under `merge-if-enabled` with auto merge enabled and all evidence/checks pass → comment with acceptance, merge the PR, set `status: "done"`, set PR number if known, and clear `current`.
 - If merge fails or cannot be attempted safely because checks/mergeability are not green, treat that as `retry`; keep the issue actionable with exact feedback rather than waiting for a human merge.
 
-Do not mark `done` in `comment-only` mode.
+Never leave accepted PR-backed work waiting for human merge. PR-backed work becomes `done` only after `gh pr merge` succeeds.
 
 Append a concise review note to `{{CURRENT_ISSUE_FILE}}` with verdict, reasons, and next action.
 
@@ -243,9 +247,7 @@ Promote only stable, source-cited cross-issue facts to `{{SHARED_CONTEXT_FILE}}`
 After issue-specific state update, read `{{STATE_FILE}}` again and classify every queue item:
 
 - actionable: `queued`, `in_progress`, `changes_requested`
-- blocked/non-actionable: `blocked`, `moot`, `ready_for_human_merge`, `done`
-
-Do not treat historical `ready_for_human_merge` items as merge backlog for this loop. They were completed by earlier runs and require a separate alignment process if needed. The loop only resumes `state.current` when interrupted and otherwise selects future actionable items.
+- blocked/non-actionable: `blocked`, `moot`, `done`
 
 Print a table:
 
@@ -275,5 +277,5 @@ Never remove `{{LOOP_FILE}}` just because the current issue needs retry.
 Print one final line:
 
 ```text
-REVIEW SUMMARY: verdict=<retry|continue|blocked|stop>; issue=#{{ISSUE}}; actionable=<N>; reason=<short reason>
+REVIEW SUMMARY: verdict=<retry|accepted|skip|blocked|stop>; issue=#{{ISSUE}}; actionable=<N>; reason=<short reason>
 ```
