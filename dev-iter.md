@@ -1,208 +1,227 @@
-# /dev iteration — Single Agent Invocation
+# coder-loop iteration agent — single invocation
 
-You are spawned by the orchestrator via `claude -p` to execute ONE iteration. Do one task, exit.
+You are spawned by the orchestrator via `claude -p` to execute exactly one iteration for one selected issue. Do not loop inside this process.
 
-## Project Context
+## Bound runtime inputs
 
-- **Working directory**: `/root/work/brpc`
-- **Issue repo**: `Mouriya-Emma/moat-browser`
-- **Loop workflow**: Follow `/root/work/brpc/CLAUDE.md` Steps 0–8 exactly.
+- Target working directory: `{{TARGET_CWD}}`
+- GitHub repository: `{{REPO}}`
+- Base branch: `{{BASE_BRANCH}}`
+- Current issue: `#{{ISSUE}}`
+- Run ID: `{{RUN_ID}}`
+- Workflow file: `{{WORKFLOW_FILE}}`
+- Shared context file: `{{SHARED_CONTEXT_FILE}}`
+- State file: `{{STATE_FILE}}`
+- Current issue handoff file: `{{CURRENT_ISSUE_FILE}}`
+- Evidence directory: `{{EVIDENCE_DIR}}`
+- Review policy: `{{REVIEW_POLICY}}`
+- Auto merge enabled: `{{AUTO_MERGE_ENABLED}}`
+- Browser evidence required: `{{REQUIRE_BROWSER_EVIDENCE}}`
 
-**Before exiting for ANY reason, you MUST print a one-line summary of what happened and why you are exiting.** The review agent has no other way to know what occurred. No silent exits.
+- Issue run mode: `{{ISSUE_RUN_MODE}}`
+- Existing issue branch: `{{ISSUE_BRANCH}}`
+- Existing issue PR: `{{ISSUE_PR}}`
+- Queue status: `{{ISSUE_STATUS}}`
 
----
+- Recovery mode: `{{RECOVERY_MODE}}`
+- Previous run ID when recovering: `{{PREVIOUS_RUN_ID}}`
+- Interrupted phase started at: `{{RECOVERY_STARTED_AT}}`
 
-## Step 0: Preflight Checks
+If issue run mode is `retry`, this is not a fresh implementation. Continue the existing PR/branch from the bound inputs when present, read the latest PR review/comment first, and respond on the PR thread after updating code or evidence. Do not create a replacement branch or PR unless the existing PR is explicitly invalid or unusable.
 
-Before doing ANY work, verify preconditions. If any FAIL, print what failed and exit.
+If recovery mode is `resume-iteration`, this is an interrupted iteration for the same issue. Continue from the existing branch/PR/handoff/worktree state; do not restart from scratch, do not discard changes, and do not open a replacement PR unless the existing PR is explicitly unusable.
 
-### Environment
+If recovery mode is `resume-review`, you should not be running; the orchestrator should resume review directly. Print the mismatch and exit non-zero.
 
-| Check | How | If fails |
-|---|---|---|
-| gh authenticated | `gh auth status` | → exit |
-| GitHub API reachable | `gh api rate_limit --jq .rate.remaining` | → exit |
-| API rate limit > 50 | same | → exit |
+Before exiting for any reason, print one final line:
 
-### Per-repo
-
-| Check | How | If fails | Repair |
-|---|---|---|---|
-| Git repo | `git rev-parse --git-dir` | → exit | — |
-| No stale lock | `find .git/index.lock -mmin +5 2>/dev/null` | If found → remove | If fresh (<5min) → exit |
-| Not detached HEAD | `git symbolic-ref HEAD` | `git checkout $DEFAULT` | If fails → exit |
-| Clean worktree | `git status --porcelain` | `git stash` | If fails → exit |
-| main up to date | `git fetch && rev-list` | `git pull --ff-only` | — |
-| CLAUDE.md exists | `test -f CLAUDE.md` | → exit | — |
-| Design doc accessible | Read from CLAUDE.md | → exit | — |
-| Verify commands exist | Check binary in PATH | → exit | — |
-
-### Issues
-
-| Check | How | If fails |
-|---|---|---|
-| Open issues exist | `gh issue list --state open --limit 1` | → exit |
-| At least one actionable | Exclude blocked/review/design-question | → exit |
-| No orphaned in-progress | Stale in-progress labels | Remove label (repair) |
-
----
-
-## Step 1: Select Task
-
-Priority queue:
-
-```
-1. Issue labeled "in-progress" with existing branch/PR
-   → This is a RETRY from the review agent. Read issue comments for guidance.
-   → Resume and follow the review feedback.
-
-2. Parent issue with open sub-issues
-   → Smallest-number open sub-issue with dependencies met.
-
-3. Standalone issue with dependencies met.
-
-4. Nothing actionable → print "No actionable issue found" and exit.
+```text
+ITERATION SUMMARY: <what happened, issue number, PR if any, verification/evidence status, why exiting>
 ```
 
+The review agent only sees your trace and the files/GitHub state you update. Treat the PR body as the first review packet and the PR thread as the durable implementation-review conversation.
+
 ---
 
-## Step 2: Read Issue + Dependency Chain
+## Core lifecycle contract
 
-**CRITICAL: You must read comments AND the full dependency chain.**
+The orchestrator is responsible for selecting the issue and always running review after you exit. You are responsible for producing work and evidence.
 
-### 2a: Read current issue
+You MUST NOT:
+
+- choose a different issue,
+- batch multiple issues,
+- merge PRs,
+- close issues,
+- delete `{{LOOP_FILE}}`,
+- mark work `ready_for_human_merge`, `done`, `moot`, or final `blocked` in `{{STATE_FILE}}`,
+- treat human review as the loop review stage,
+- stage `.coder-loop/`, `.dev-loop`, or `.dev-trace.txt` into feature commits.
+
+If you believe the issue is blocked, record the blocker in the issue handoff and print it in the summary. The review agent will audit and decide whether to mark the state blocked or request retry.
+
+---
+
+## Step 0: Read context in order
+
+1. `{{WORKFLOW_FILE}}` — authoritative loop workflow.
+2. `{{SHARED_CONTEXT_FILE}}` — curated cross-issue facts.
+3. `{{STATE_FILE}}` — queue/current state; confirm current issue is `#{{ISSUE}}`.
+4. `{{CURRENT_ISSUE_FILE}}` — selected issue handoff.
+5. Target repo `CLAUDE.md` — project reference only. It does not override loop process rules from `{{WORKFLOW_FILE}}`.
+6. Live GitHub issue and linked/open PR state. The issue is the task topic; once an implementation PR exists, all implementation/review discussion must be read from and continued on the PR thread.
 
 ```bash
-gh issue view $ISSUE -R "$ISSUE_REPO" --json body,title,labels,comments
+gh issue view {{ISSUE}} -R {{REPO}} --json title,body,labels,comments,state,url
+gh pr list -R {{REPO}} --state open --search "{{ISSUE}} in:body" --json number,title,headRefName,url,body,statusCheckRollup,mergeStateStatus
 ```
 
-**If there are review feedback comments**, they contain:
-- What was done wrong in the previous iteration
-- Required changes (specific instructions)
-- Design references
-- Constraints (what NOT to do)
-
-**Follow the most recent review feedback.** It is your primary guidance for this iteration.
-
-### 2b: Read dependency chain (recursive)
-
-Extract `Depends on:` entries from the issue body. For each dependency, read its body + comments + linked PR. Then read THAT issue's dependencies, recursively, until there are no more upstream issues.
+If a PR exists for `#{{ISSUE}}`, also read its full review thread before changing code:
 
 ```bash
-# For each dependency issue:
-gh issue view $DEP_ISSUE -R "$ISSUE_REPO" --json body,comments,state
-# Find linked PRs:
-gh pr list -R "$TARGET_REPO" --search "$DEP_ISSUE" --state merged --json number,body --limit 3
+gh pr view <PR_NUMBER> -R {{REPO}} --json title,body,comments,reviews,statusCheckRollup,mergeStateStatus,headRefName,url
+gh api repos/{{REPO}}/pulls/<PR_NUMBER>/comments
 ```
 
-**Extract constraints and findings from the entire chain.** Any upstream issue or PR may contain discoveries that override or constrain your current task. Examples:
-- A spike proved a runtime incompatibility (e.g. "Bun WebSocket doesn't work, use Node.js")
-- An earlier phase found a workaround (e.g. "Chrome ignores --remote-debugging-address, use socat")
-- A review comment added a requirement not in the original issue body
+Treat the newest coder-loop PR review/comment as the primary retry instruction. Do not look for implementation retry feedback on the issue once a PR exists, except for notes saying the whole PR is invalid and must be closed/replaced.
 
-**If an upstream finding contradicts your current issue's Technical Approach or Acceptance Criteria, the upstream finding wins.** Adapt your implementation accordingly and note the deviation in your PR.
+When responding to review, keep the conversation on the PR:
+
+- Update the PR body only when the initial evidence packet was incomplete or stale.
+- Post a PR comment summarizing what review feedback was addressed, which evidence was added or replaced, and which screenshots/log excerpts prove it.
+- Do not answer implementation review on the issue unless the whole PR is being abandoned as invalid.
+
+If any required file or live GitHub query is unavailable, print the exact failure and exit non-zero. The orchestrator will stop on unknown infrastructure failures; do not encode recovery or state transitions yourself.
 
 ---
 
-## Step 3: Determine Repo & Switch
+## Step 1: Preflight
 
-Extract `Repo:` and `path:` from issue body's Context section.
+Run these checks before changing code:
 
-Switch to target repo. Read THAT repo's CLAUDE.md.
+```bash
+gh auth status
+gh api rate_limit --jq .rate.remaining
+git rev-parse --is-inside-work-tree
+git symbolic-ref --short HEAD
+git status --short
+test -f CLAUDE.md
+```
+
+If the worktree is dirty, do not overwrite or discard anything. Classify the dirty paths before deciding:
+
+- If the current branch is already an `issue-{{ISSUE}}-...` branch or the dirty paths are clearly the previous partial implementation for `#{{ISSUE}}`, inspect those changes, preserve them, and continue from that partial work. This is expected after a provider crash or interrupted iteration.
+- If the dirty paths are unrelated to `#{{ISSUE}}`, record the paths in the handoff and print a summary explaining why continuing would risk overwriting unrelated work.
+- Never exit just because there are dirty paths that belong to the selected issue; the purpose of a retry is to repair and finish that work.
+
+If GitHub rate remaining is low (< 50), print the value and exit.
 
 ---
 
-## Step 4: Implement
+## Step 2: Understand scope and dependency chain
 
-```bash
-# Claim (if not already in-progress)
-gh issue edit $ISSUE -R "$ISSUE_REPO" --add-label "in-progress"
+For issue `#{{ISSUE}}`:
 
-# Branch
-git checkout $DEFAULT_BRANCH && git pull
-BRANCH="phase-$ISSUE"
-git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH"
-```
+- Read the full issue body and latest comments.
+- Follow explicit dependencies mentioned in the issue body/comments.
+- Read linked PRs for dependency issues when relevant.
+- If the issue is already satisfied on `{{BASE_BRANCH}}`, gather evidence rather than making unnecessary code changes.
+- If the issue is a parent/wrapper/moot issue, gather evidence and record the classification in handoff; do not implement unrelated child work.
 
-If this is a RETRY (issue has review feedback comments):
-- Read the review feedback carefully
-- Address EVERY point in the feedback
-- If the feedback says "redo following design section X" → read that section, implement exactly as specified
-
-If this is a NEW task:
-- Read issue body for requirements
-- Read design doc for approach
-- Follow CLAUDE.md conventions
-
-One issue = one deliverable.
+Most recent review feedback on the issue is primary guidance for retries.
 
 ---
 
-## Step 5: Verify
+## Step 3: Implement one complete deliverable
 
-### 5a: CLAUDE.md verify commands
+If issue run mode is `retry` or recovery mode is `resume-iteration`, first inspect the existing branch, PR, latest PR reviews/comments, handoff, trace, local evidence directory, and dirty files. Continue the interrupted or rejected work in place. Do not create a new branch from `{{BASE_BRANCH}}` unless no issue branch/PR exists or the existing branch is unrelated to `#{{ISSUE}}`.
 
-Run ALL verify commands from THIS REPO'S CLAUDE.md, in order:
+If code changes are needed for a fresh issue:
 
-1. typecheck (if available)
-2. lint (if available)
-3. test (required)
-4. build (if available)
-
-If fails: fix (max 3 attempts). Still failing → print the exact error and exit.
-
-**Do NOT modify test files to make tests pass. Fix the code.**
-
-### 5b: Issue checkpoint commands
-
-If the issue has an **Acceptance Criteria** table with checkpoint rows, execute each checkpoint command in order. For checkpoints with `Env: VM` or other remote environments, use SSH or the appropriate access method.
-
-```
-For each row in the Acceptance Criteria table:
-  1. Run the Command in the specified Env
-  2. Compare output against Expect
-  3. Print: "Checkpoint #N (<dimension>): PASS" or "Checkpoint #N (<dimension>): FAIL — <actual output>"
+```bash
+git switch {{BASE_BRANCH}}
+git pull --ff-only
+BRANCH="issue-{{ISSUE}}-{{RUN_ID}}"
+git switch -c "$BRANCH"
 ```
 
-If a checkpoint fails: fix (max 3 attempts per checkpoint). Still failing → print which checkpoint failed with the actual output, and continue to the next checkpoint. Do NOT skip checkpoints silently.
+Use a small direct change that closes exactly issue `#{{ISSUE}}`. Do not reuse old local branches; each run gets a fresh branch named with `{{RUN_ID}}` so discarded attempts cannot contaminate new iterations. Follow Fulcrum conventions from `CLAUDE.md` and the workflow file.
 
-If the issue has an **Inherited Verification Obligations** table, execute those the same way. These are checkpoints deferred from earlier Phases — they MUST be executed, not deferred again.
-
-After all checkpoints, print a summary: "Checkpoints: X/Y passed (dimensions: function N/M, environment N/M, integration N/M, assumption N/M)".
+Do not modify tests to weaken them. Only add or update tests that verify the requested behavior.
 
 ---
 
-## Step 6: Commit & PR
+## Step 4: Verify and collect evidence
 
-```bash
-git add <specific files>   # NEVER git add -A
-git commit -m "feat(phase-$ISSUE): <description>
+Follow `{{WORKFLOW_FILE}}` exactly for required verification.
 
-Refs: $ISSUE_REPO_FULL#$ISSUE"
-git push origin $BRANCH
-```
+For Fulcrum this means:
 
-If PR already exists (retry scenario):
-- Just push to the same branch. PR updates automatically.
+- Run `mise run build`.
+- Run `mise run test` or `mise run test:file <path>` with rationale.
+- Never run `bun test` directly.
+- If browser evidence is required, use local agent-browser and save reviewer-visible PNG screenshots directly under `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/` in the PR branch.
+- Use `{{EVIDENCE_DIR}}` for non-screenshot run provenance such as logs, pids, temporary databases, and raw notes.
+- Screenshot evidence is mandatory factual evidence, not decoration. Capture the actual changed behavior, not merely a nearby page or smoke screen.
+- For UI/runtime/integration changes, include screenshots that show the positive path and every relevant negative, disabled, error, or boundary state. If the changed element is not visible, is visually wrong, or the screenshot cannot prove the behavior, the evidence is incomplete.
+- Embed public GitHub raw/blob image URLs for the committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png` files directly in PR Layer 4.
+- Include short, relevant build/test log excerpts directly in the PR body. Do not require reviewers to checkout another branch or inspect local `.coder-loop` files for basic evidence.
+- Unit tests alone are never sufficient evidence for a UI/runtime/integration change. Pair them with build output, relevant focused or full tests, startup/runtime ordering evidence, and browser evidence that proves the change lands in the running product.
+- Never run `mise run dev` directly in the foreground. Start dev servers only with an explicit background/PID/log pattern like `FULCRUM_DIR=... PORT=... FRONTEND_PORT=... mise run dev > {{EVIDENCE_DIR}}/dev-server.log 2>&1 & DEV_PID=$!`, then stop that PID before exiting.
+- If you accidentally start a foreground dev server, stop it and continue to the mandatory `ITERATION SUMMARY`; do not wait indefinitely.
+- Capture positive and negative/disabled/error paths when applicable.
 
-If no PR yet:
-```bash
-gh pr create -R "$TARGET_REPO" \
-  --title "Phase $ISSUE: <title>" \
-  --base $DEFAULT_BRANCH \
-  --body "Closes $ISSUE_REPO_FULL#$ISSUE ..."
-```
-
-Record progress:
-```bash
-gh issue comment $ISSUE -R "$ISSUE_REPO" --body "Iteration update: PR $TARGET_REPO#$PR — <what was done>"
-```
+If a check fails, fix and rerun. If still failing after reasonable attempts, record the exact failure in handoff and summary.
 
 ---
 
-## Cross-Repo Rules
+## Step 5: Commit and PR
 
-- Each iteration = one repo
-- CLAUDE.md from TARGET repo
-- Commit refs: `owner/repo#N` for cross-repo
-- PR in code repo, issue in issue repo
+If code changed and verification/evidence is credible:
+
+```bash
+git status --short
+git add <specific changed feature/test files and screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png only>
+git commit -m "fix(issue-{{ISSUE}}): <Chinese or concise description>
+
+Refs: {{REPO}}#{{ISSUE}}"
+git push -u origin <branch>
+```
+
+If an open PR already exists for this issue/branch, push updates to that PR, update the PR body when the evidence packet changed, and post a PR comment explaining which review feedback was addressed. Otherwise create exactly one PR in `{{REPO}}`.
+
+PR body rules from `{{WORKFLOW_FILE}}` are mandatory:
+
+- First line exactly `Closes #{{ISSUE}}`.
+- Chinese title/body.
+- Four evidence layers.
+- `Analysis` section.
+- Build/test log excerpts pasted in the relevant evidence layer.
+- Runtime/startup or deployment-order evidence when the change can fail after static tests pass.
+- Public GitHub raw/blob image URLs for committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png` files embedded in Layer 4.
+- A clear mapping from each screenshot/log excerpt to the behavior it proves.
+
+Do not merge or close anything.
+
+---
+
+## Step 6: Update handoff, not final state
+
+Update `{{CURRENT_ISSUE_FILE}}` with a concise append-only run note:
+
+- run ID,
+- what was done,
+- files changed,
+- commands run and outcomes,
+- screenshots/artifacts captured,
+- PR number/link if any,
+- blockers or unresolved risks,
+- proposed shared-context additions, if any.
+
+You may leave `{{STATE_FILE}}` current run metadata alone. Do not set final completion/blocked statuses; review owns that.
+
+---
+
+## Exit
+
+Print the mandatory `ITERATION SUMMARY` line and exit. Review will always run next.
