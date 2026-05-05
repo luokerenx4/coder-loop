@@ -158,11 +158,13 @@ For Fulcrum this means:
 - Run `mise run build`.
 - Run `mise run test` or `mise run test:file <path>` with rationale.
 - Never run `bun test` directly.
-- If browser evidence is required, use local agent-browser and save reviewer-visible PNG screenshots directly under `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/` in the PR branch.
+- If browser evidence is required, use local agent-browser and save reviewer-visible JPEG screenshots directly under `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/` in the PR branch.
+- Capture AI/PR evidence screenshots with bounded size, for example: `agent-browser --screenshot-format jpeg --screenshot-quality 80 screenshot screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/<name>.jpg`. Use `--full` or `--annotate` with the same JPEG/quality flags when needed.
+- Do not use PNG for normal PR evidence; PNG is only acceptable when the issue specifically requires pixel-perfect/lossless comparison and the PR explains why.
 - Use `{{EVIDENCE_DIR}}` for non-screenshot run provenance such as logs, pids, temporary databases, and raw notes.
 - Screenshot evidence is mandatory factual evidence, not decoration. Capture the actual changed behavior, not merely a nearby page or smoke screen.
 - For UI/runtime/integration changes, include screenshots that show the positive path and every relevant negative, disabled, error, or boundary state. If the changed element is not visible, is visually wrong, or the screenshot cannot prove the behavior, the evidence is incomplete.
-- Embed public GitHub raw/blob image URLs for the committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png` files directly in PR Layer 4.
+- Embed public GitHub raw/blob image URLs for the committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.{jpg,jpeg}` files directly in PR Layer 4.
 - Include short, relevant build/test log excerpts directly in the PR body. Do not require reviewers to checkout another branch or inspect local `.coder-loop` files for basic evidence.
 - Unit tests alone are never sufficient evidence for a UI/runtime/integration change. Pair them with build output, relevant focused or full tests, startup/runtime ordering evidence, and browser evidence that proves the change lands in the running product.
 - Never run `mise run dev` directly in the foreground. Start dev servers only with an explicit background/PID/log pattern like `FULCRUM_DIR=... PORT=... FRONTEND_PORT=... mise run dev > {{EVIDENCE_DIR}}/dev-server.log 2>&1 & DEV_PID=$!`, then stop that PID before exiting.
@@ -179,7 +181,7 @@ If code changed and verification/evidence is credible:
 
 ```bash
 git status --short
-git add <specific changed feature/test files and screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png only>
+git add <specific changed feature/test files and screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.{jpg,jpeg} only>
 git commit -m "fix(issue-{{ISSUE}}): <Chinese or concise description>
 
 Refs: {{REPO}}#{{ISSUE}}"
@@ -196,7 +198,7 @@ PR body rules from `{{WORKFLOW_FILE}}` are mandatory:
 - `Analysis` section.
 - Build/test log excerpts pasted in the relevant evidence layer.
 - Runtime/startup or deployment-order evidence when the change can fail after static tests pass.
-- Public GitHub raw/blob image URLs for committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.png` files embedded in Layer 4.
+- Public GitHub raw/blob image URLs for committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.{jpg,jpeg}` files embedded in Layer 4.
 - A clear mapping from each screenshot/log excerpt to the behavior it proves.
 
 Do not merge or close anything.

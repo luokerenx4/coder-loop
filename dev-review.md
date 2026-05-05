@@ -133,8 +133,11 @@ For Fulcrum, reject unless the trace/handoff/PR body and PR thread show reviewer
 - `mise run test` or a focused `mise run test:file <path>` ran and passed with rationale, with a relevant log excerpt pasted in the PR body when a PR exists.
 - `bun test` was not used directly.
 - Required local agent-browser screenshots are committed in the PR branch under `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/` or another clearly scoped `screenshots/` path.
+- Normal AI/PR evidence screenshots must be `.jpg` or `.jpeg` captured with bounded quality, such as `agent-browser --screenshot-format jpeg --screenshot-quality 80 ...`. Reject PNG evidence unless the PR explicitly justifies a pixel-perfect/lossless comparison need.
 - The PR body embeds public GitHub raw/blob image URLs for those committed `screenshots/` files, and the linked paths correspond to local files the reviewer can read directly.
+- If a PR body, trace, or handoff references a `.png` screenshot path that is missing, try the same path with `.jpg` and `.jpeg` before rejecting it as missing evidence.
 - Screenshots show the actual changed feature or behavior, not just a nearby smoke page. If the relevant element is missing, visually wrong, in the wrong state, too small/ambiguous to verify, or the linked local screenshot file is missing, reject for insufficient evidence.
+- If screenshots are PNG or otherwise oversized, request JPEG re-capture/compression instead of repeatedly reading the large PNG files into the review context.
 - Positive path and relevant negative/disabled/error path were exercised where applicable.
 - Unit tests alone are not enough for UI/runtime/integration changes, because they can pass while the product behavior, startup order, wiring, or visual state is wrong.
 
