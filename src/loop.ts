@@ -305,10 +305,10 @@ async function main() {
 			const iterStart = Date.now()
 			const iterPromptRaw = await readFile(ITERATION_PROMPT, "utf-8")
 			const iterPrompt = renderPrompt(iterPromptRaw, options, context)
-			const { output: iterTrace, code: iterCode } = await runAgent(options, "iter", iterPrompt)
+			const iterOutputPath = agentOutputPath(options, runId, "iter")
+			const { output: iterTrace, code: iterCode } = await runAgent(options, "iter", iterPrompt, iterOutputPath)
 			const iterDuration = ((Date.now() - iterStart) / 1000).toFixed(0)
 			await writeFile(options.traceFile, iterTrace)
-			const iterOutputPath = agentOutputPath(options, runId, "iter")
 			await writeFile(iterOutputPath, iterTrace)
 
 			log(`Iteration agent finished: issue=#${selected.item.issue}, exit=${iterCode}, duration=${iterDuration}s, trace=${options.traceFile}, output=${iterOutputPath} (${iterTrace.length} bytes)`)
@@ -359,10 +359,10 @@ async function runReview(options: LoopOptions, context: RenderContext): Promise<
 	const reviewStart = Date.now()
 	const reviewPromptRaw = await readFile(REVIEW_PROMPT, "utf-8")
 	const reviewPrompt = renderPrompt(reviewPromptRaw, options, context)
-	const { output: reviewTrace, code: reviewCode } = await runAgent(options, "review", reviewPrompt)
+	const reviewOutputPath = agentOutputPath(options, context.runId, "review")
+	const { output: reviewTrace, code: reviewCode } = await runAgent(options, "review", reviewPrompt, reviewOutputPath)
 	const reviewDuration = ((Date.now() - reviewStart) / 1000).toFixed(0)
 
-	const reviewOutputPath = agentOutputPath(options, context.runId, "review")
 	await writeFile(reviewOutputPath, reviewTrace)
 	log(`Review agent finished: exit=${reviewCode}, duration=${reviewDuration}s, output=${reviewOutputPath} (${reviewTrace.length} bytes)`)
 	if (reviewTrace.trim().length > 0) {
@@ -577,27 +577,35 @@ function renderPrompt(template: string, options: LoopOptions, context: RenderCon
 	return replacements.reduce((prompt, [placeholder, value]) => prompt.replaceAll(placeholder, value), template)
 }
 
-async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string): Promise<{ output: string; code: number }> {
+async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string, outputPath: string): Promise<{ output: string; code: number }> {
 	return new Promise((resolveResult) => {
+		const outputStream = createWriteStream(outputPath, { flags: "a" })
 		const child = spawn(options.claudeBinary, [...options.claudeExtraArgs, "-p", prompt], {
 			cwd: options.targetCwd,
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: true,
 		})
 
-		log(`Agent [${label}] spawned: pid=${child.pid}`)
+		log(`Agent [${label}] spawned: pid=${child.pid}, output=${outputPath}`)
 
 		const out: Buffer[] = []
 		const err: Buffer[] = []
 		let settled = false
 
-		child.stdout.on("data", (chunk: Buffer) => out.push(chunk))
-		child.stderr.on("data", (chunk: Buffer) => err.push(chunk))
+		child.stdout.on("data", (chunk: Buffer) => {
+			out.push(chunk)
+			outputStream.write(chunk)
+		})
+		child.stderr.on("data", (chunk: Buffer) => {
+			err.push(chunk)
+			outputStream.write(chunk)
+		})
 
 		child.on("error", (error) => {
 			if (settled) return
 			settled = true
 			log(`Agent [${label}] spawn error: ${error.message}`)
+			outputStream.end(`\nspawn error: ${error.message}\n`)
 			resolveResult({ output: `spawn error: ${error.message}`, code: 1 })
 		})
 
@@ -607,6 +615,7 @@ async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string)
 			const stdout = Buffer.concat(out).toString("utf-8")
 			const stderr = Buffer.concat(err).toString("utf-8")
 			if (signal) log(`Agent [${label}] killed by signal ${signal}`)
+			outputStream.end()
 			resolveResult({ output: stdout + "\n" + stderr, code: code ?? 1 })
 		})
 	})
