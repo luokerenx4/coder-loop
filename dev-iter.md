@@ -153,7 +153,29 @@ Do not modify tests to weaken them. Only add or update tests that verify the req
 
 Follow `{{WORKFLOW_FILE}}` exactly for required verification.
 
-For Fulcrum this means:
+Before treating the PR as reviewable, detect whether the target project has CI configuration such as `.github/workflows/*.yml`, `.github/workflows/*.yaml`, or another project-declared CI system. Record the CI detection result in the evidence.
+
+If the project has GitHub Actions workflow jobs that can be reproduced locally, run the relevant job with `act` as the local CI-parity check. Derive the workflow path, event, job, and runner architecture from the target project and local host; do not hard-code one repository's CI shape as universal. Prefer the local/native `act` architecture first, especially on Darwin arm hosts, and note that native-arm local results can differ from Linux GitHub runners. For a GitHub Actions project shaped like Fulcrum, the command may be:
+
+```bash
+act pull_request -W .github/workflows/ci.yml -j test
+```
+
+If the default runner image lacks required tooling or is too small for the workflow, retry with an appropriate project-specific runner image while still preferring native architecture, for example:
+
+```bash
+act pull_request -W .github/workflows/ci.yml -j test -P ubuntu-latest=catthehacker/ubuntu:act-latest
+```
+
+Only use an explicit amd64 runner or `--container-architecture linux/amd64` when the workflow, dependency, or image demonstrably requires x86_64 compatibility. If you do, record why the amd64 VM/emulation was necessary and call out the architecture-parity caveat in the evidence.
+
+If `pull_request` cannot be reproduced locally but the workflow supports `workflow_dispatch`, use the same workflow and job with that event. Ordinary project test commands are useful quick checks, but for a project with reproducible CI they do not replace CI-parity evidence unless you explicitly prove they cover the same workflow job semantics. If no project CI is detected, record `no CI detected` and run the project's documented local verification commands instead.
+
+If local CI-parity cannot run because of Docker, act installation, image pull, network, runner tooling, or third-party service limitations, record the exact command, failure mode, exit status, and log excerpt as an infrastructure blocker. Do not silently skip local CI-parity, do not call remote PR CI a substitute, and do not leave review to discover a CI failure or hang.
+
+If local CI-parity reaches product tests and fails or hangs, fix locally and rerun before handing off to review.
+
+For Fulcrum this also means:
 
 - Run `mise run build`.
 - Run `mise run test` or `mise run test:file <path>` with rationale.
@@ -197,6 +219,7 @@ PR body rules from `{{WORKFLOW_FILE}}` are mandatory:
 - Four evidence layers.
 - `Analysis` section.
 - Build/test log excerpts pasted in the relevant evidence layer.
+- CI detection and local CI-parity evidence: detected workflow/job or `no CI detected`, exact command, runner architecture choice, exit status, and log path or concise log excerpt.
 - Runtime/startup or deployment-order evidence when the change can fail after static tests pass.
 - Public GitHub raw/blob image URLs for committed `screenshots/coder-loop/issue-{{ISSUE}}/{{RUN_ID}}/*.{jpg,jpeg}` files embedded in Layer 4.
 - A clear mapping from each screenshot/log excerpt to the behavior it proves.
@@ -213,6 +236,7 @@ Update `{{CURRENT_ISSUE_FILE}}` with a concise append-only run note:
 - what was done,
 - files changed,
 - commands run and outcomes,
+- CI detection result and local CI-parity status, including exact command, runner architecture choice, exit status, and whether any failure is product/test failure or infrastructure blocker,
 - screenshots/artifacts captured,
 - PR number/link if any,
 - blockers or unresolved risks,

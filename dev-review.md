@@ -117,6 +117,7 @@ For issue `#{{ISSUE}}`:
 - PR body first line must be exactly `Closes #{{ISSUE}}`.
 - PR title/body must be Chinese when required by workflow.
 - PR body must include four evidence layers and `Analysis`.
+- PR body or PR-thread evidence must state CI detection and local CI-parity status when the project has reproducible CI.
 - Once an implementation PR exists, implementation/review discussion must be on the PR thread. If the latest retry response only appears on the issue, reject and require a PR-thread reply.
 
 Any Phase A violation is `retry` with detailed public feedback through Step 5. If a PR exists for the selected issue, the feedback must be a GitHub PR review on that PR, not an issue comment. Do not inspect evidence or code until Phase A passes.
@@ -127,7 +128,18 @@ Any Phase A violation is `retry` with detailed public feedback through Step 5. I
 
 Use `{{WORKFLOW_FILE}}` as the standard.
 
-For Fulcrum, reject unless the trace/handoff/PR body and PR thread show reviewer-consumable evidence:
+Audit CI detection and local CI-parity evidence before treating product evidence as sufficient:
+
+- The trace, handoff, PR body, or PR thread must state whether project CI was detected.
+- If the project has GitHub Actions or another CI job that can be reproduced locally, the evidence must include the local CI-parity command, workflow/job or equivalent CI target, runner architecture choice, exit status, and a log path or concise log excerpt.
+- For GitHub Actions projects, `act` is the preferred local CI-parity tool when the workflow/job can run locally. The command must be derived from the target project's workflow and job, not from a hard-coded repository assumption. Prefer native/local architecture first; if the iteration used an explicit amd64 runner or `--container-architecture linux/amd64`, it must explain why that VM/emulation was necessary and note architecture-parity caveats.
+- If only ordinary project tests ran, accept them as CI-parity only when the evidence explains why they cover the same CI job semantics. Otherwise reject for missing local CI-parity.
+- If no project CI is detected, the evidence must explicitly say `no CI detected` and show the project's documented local verification commands and outcomes.
+- If local CI-parity could not run because of infrastructure such as Docker, act installation, image pull, network, runner tooling, or third-party service limitations, review may return `retry` or `blocked` based on whether another immediate attempt is useful, but it must not accept the PR as if CI passed.
+- Remote PR checks are Phase C mergeability signals. They do not substitute for iteration-stage local CI-parity evidence on projects with reproducible CI.
+- Reject any iteration that only says it is waiting for PR CI, only cites GitHub check state, or leaves review to discover a CI failure/hang.
+
+For Fulcrum, also reject unless the trace/handoff/PR body and PR thread show reviewer-consumable evidence:
 
 - `mise run build` ran and passed, with a relevant log excerpt pasted in the PR body when a PR exists.
 - `mise run test` or a focused `mise run test:file <path>` ran and passed with rationale, with a relevant log excerpt pasted in the PR body when a PR exists.
@@ -153,7 +165,11 @@ Reject unless live PR metadata and diff review show:
 - PR diff does not stage `.coder-loop/`, `.dev-loop`, or `.dev-trace.txt`.
 - PR does not weaken tests.
 - PR follows target project conventions.
-- Required GitHub checks are passing. Pending, failing, missing, or unknown checks are not mergeable evidence.
+- Required GitHub checks are passing. Pending, failing, missing, or unknown checks are not mergeable evidence, and passing GitHub checks still do not replace the Phase B local CI-parity requirement.
+- Review must actively observe CI before deciding. Use live GitHub metadata/check APIs to inspect check names, statuses, conclusions, started/completed timestamps, URLs, and head SHA; do not decide from stale PR body text or a single superficial pending flag.
+- If a required CI check is pending/running, manually confirm whether it is merely still within a reasonable runtime or has likely timed out/hung. Compare started time, elapsed time, workflow/job expectations, and any available check URL/log status. A long-running check must not cause blind repeated `retry` without this timeout/hang assessment.
+- If CI is still legitimately running, return `retry` with exact observed check state and a clear instruction to observe again later, not to redo unrelated implementation work.
+- If CI appears timed out or hung, return `retry` with feedback that identifies the timed-out check and requires iteration to reproduce/diagnose with local CI-parity evidence before another review.
 - GitHub mergeability is clean enough to merge immediately.
 
 ---
@@ -182,7 +198,7 @@ gh pr review <PR_NUMBER> -R {{REPO}} --request-changes --body "$(cat <<'EOF'
 1. <specific next action for the iteration agent, including which PR body section or PR-thread reply must be updated>
 
 ### Evidence status
-<build/test/browser/PR body/check status; explicitly say whether review stopped before code review because evidence was insufficient>
+<build/test/local CI-parity/browser/PR body/check status; include live CI observation, elapsed time/timeout assessment for pending checks, and explicitly say whether review stopped before code review because evidence was insufficient>
 
 ### Constraints
 - Do not bypass coder-loop review.
@@ -207,7 +223,7 @@ gh issue comment {{ISSUE}} -R {{REPO}} --body "$(cat <<'EOF'
 1. <specific next action for the iteration agent, including which PR body section or PR-thread reply must be updated>
 
 ### Evidence status
-<build/test/browser/PR body/check status; explicitly say whether review stopped before code review because evidence was insufficient>
+<build/test/local CI-parity/browser/PR body/check status; include live CI observation, elapsed time/timeout assessment for pending checks, and explicitly say whether review stopped before code review because evidence was insufficient>
 
 ### Constraints
 - Do not bypass coder-loop review.

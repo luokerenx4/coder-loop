@@ -119,6 +119,21 @@ type LoopOptions = {
 	dryRun: boolean
 }
 
+type AgentRunStatus = {
+	label: AgentLabel
+	pid: number | null
+	startedAt: string
+	lastEventAt: string
+	outputPath: string
+	statusPath: string
+	bytesWritten: number
+	promptChars: number
+	lastStream: "stdout" | "stderr" | null
+	exitCode: number | null
+	signal: string | null
+	error: string | null
+}
+
 type SelectedIssue = {
 	item: QueueItem
 	issueFile: string
@@ -309,7 +324,6 @@ async function main() {
 			const { output: iterTrace, code: iterCode } = await runAgent(options, "iter", iterPrompt, iterOutputPath)
 			const iterDuration = ((Date.now() - iterStart) / 1000).toFixed(0)
 			await writeFile(options.traceFile, iterTrace)
-			await writeFile(iterOutputPath, iterTrace)
 
 			log(`Iteration agent finished: issue=#${selected.item.issue}, exit=${iterCode}, duration=${iterDuration}s, trace=${options.traceFile}, output=${iterOutputPath} (${iterTrace.length} bytes)`)
 
@@ -363,7 +377,6 @@ async function runReview(options: LoopOptions, context: RenderContext): Promise<
 	const { output: reviewTrace, code: reviewCode } = await runAgent(options, "review", reviewPrompt, reviewOutputPath)
 	const reviewDuration = ((Date.now() - reviewStart) / 1000).toFixed(0)
 
-	await writeFile(reviewOutputPath, reviewTrace)
 	log(`Review agent finished: exit=${reviewCode}, duration=${reviewDuration}s, output=${reviewOutputPath} (${reviewTrace.length} bytes)`)
 	if (reviewTrace.trim().length > 0) {
 		await appendFile(options.logFile, `\n--- review output ${new Date().toISOString()} ---\n${reviewTrace}\n`)
@@ -579,31 +592,80 @@ function renderPrompt(template: string, options: LoopOptions, context: RenderCon
 
 async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string, outputPath: string): Promise<{ output: string; code: number }> {
 	return new Promise((resolveResult) => {
-		const outputStream = createWriteStream(outputPath, { flags: "a" })
-		const child = spawn(options.claudeBinary, [...options.claudeExtraArgs, "-p", prompt], {
-			cwd: options.targetCwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			detached: true,
-		})
-
-		log(`Agent [${label}] spawned: pid=${child.pid}, output=${outputPath}`)
-
 		const out: Buffer[] = []
 		const err: Buffer[] = []
 		let settled = false
 
-		child.stdout.on("data", (chunk: Buffer) => {
-			out.push(chunk)
+		const startedAt = new Date().toISOString()
+		const attemptPath = agentAttemptOutputPath(outputPath, startedAt)
+		const statusPath = agentStatusPath(outputPath)
+		const outputStream = createWriteStream(attemptPath, { flags: "wx" })
+		const claudeArgs = agentClaudeArgs(options.claudeExtraArgs, prompt)
+		const status: AgentRunStatus = {
+			label,
+			pid: null,
+			startedAt,
+			lastEventAt: startedAt,
+			outputPath: attemptPath,
+			statusPath,
+			bytesWritten: 0,
+			promptChars: prompt.length,
+			lastStream: null,
+			exitCode: null,
+			signal: null,
+			error: null,
+		}
+		const writeStatus = (): void => {
+			void writeFile(statusPath, `${JSON.stringify(status, null, "\t")}\n`).catch((error: unknown) => {
+				log(`Agent [${label}] status write failed: ${error instanceof Error ? error.message : String(error)}`)
+			})
+		}
+		const writeLatestIndex = (): void => {
+			const index = [
+				`# Agent [${label}] latest attempt`,
+				`startedAt: ${status.startedAt}`,
+				`pid: ${status.pid ?? ""}`,
+				`status: ${statusPath}`,
+				`output: ${attemptPath}`,
+				`promptChars: ${prompt.length}`,
+				"",
+			].join("\n")
+			void writeFile(outputPath, index).catch((error: unknown) => {
+				log(`Agent [${label}] latest index write failed: ${error instanceof Error ? error.message : String(error)}`)
+			})
+		}
+		const recordChunk = (stream: "stdout" | "stderr", chunk: Buffer): void => {
+			status.lastStream = stream
+			status.lastEventAt = new Date().toISOString()
+			status.bytesWritten += chunk.byteLength
+			if (stream === "stdout") out.push(chunk)
+			else err.push(chunk)
 			outputStream.write(chunk)
+			writeStatus()
+		}
+
+		const child = spawn(options.claudeBinary, claudeArgs, {
+			cwd: options.targetCwd,
+			stdio: ["ignore", "pipe", "pipe"],
+			detached: true,
 		})
-		child.stderr.on("data", (chunk: Buffer) => {
-			err.push(chunk)
-			outputStream.write(chunk)
-		})
+		status.pid = child.pid ?? null
+		writeStatus()
+		writeLatestIndex()
+
+		log(`Agent [${label}] spawned: pid=${child.pid}, output=${attemptPath}, latest=${outputPath}, status=${statusPath}`)
+		outputStream.write(`# Agent [${label}] started at ${startedAt}\n`)
+		outputStream.write(`# Command: ${options.claudeBinary} ${claudeArgs.map(shellQuote).join(" ")}\n\n`)
+
+		child.stdout.on("data", (chunk: Buffer) => recordChunk("stdout", chunk))
+		child.stderr.on("data", (chunk: Buffer) => recordChunk("stderr", chunk))
 
 		child.on("error", (error) => {
 			if (settled) return
 			settled = true
+			status.error = error.message
+			status.lastEventAt = new Date().toISOString()
+			writeStatus()
 			log(`Agent [${label}] spawn error: ${error.message}`)
 			outputStream.end(`\nspawn error: ${error.message}\n`)
 			resolveResult({ output: `spawn error: ${error.message}`, code: 1 })
@@ -614,11 +676,27 @@ async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string,
 			settled = true
 			const stdout = Buffer.concat(out).toString("utf-8")
 			const stderr = Buffer.concat(err).toString("utf-8")
+			status.exitCode = code ?? 1
+			status.signal = signal
+			status.lastEventAt = new Date().toISOString()
+			writeStatus()
 			if (signal) log(`Agent [${label}] killed by signal ${signal}`)
-			outputStream.end()
+			outputStream.end(`\n# Agent [${label}] exited at ${status.lastEventAt} code=${code ?? 1}${signal ? ` signal=${signal}` : ""}\n`)
 			resolveResult({ output: stdout + "\n" + stderr, code: code ?? 1 })
 		})
 	})
+}
+
+function agentClaudeArgs(extraArgs: string[], prompt: string): string[] {
+	const args = [...extraArgs]
+	if (!args.includes("--output-format")) args.push("--output-format", "stream-json")
+	if (!args.includes("--verbose")) args.push("--verbose")
+	args.push("-p", prompt)
+	return args
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
 async function ensureGitExclude(cwd: string): Promise<void> {
@@ -635,6 +713,15 @@ async function ensureGitExclude(cwd: string): Promise<void> {
 
 function agentOutputPath(options: LoopOptions, runId: string, label: AgentLabel): string {
 	return resolve(options.logDir, `${runId}.${label}.txt`)
+}
+
+function agentAttemptOutputPath(outputPath: string, startedAt: string): string {
+	const suffix = startedAt.slice(0, 19).replace(/[T:]/g, "-")
+	return outputPath.replace(/\.txt$/, `.attempt-${suffix}.${process.pid}.txt`)
+}
+
+function agentStatusPath(outputPath: string): string {
+	return outputPath.replace(/\.txt$/, `.status.json`)
 }
 
 function resolveFrom(base: string, path: string): string {
