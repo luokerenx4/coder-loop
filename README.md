@@ -74,24 +74,31 @@ Agent prompt 是另一层状态机：iteration/review 通过 `prompts/` 下的 f
 
 ## 用法
 
-### 阶段一：规划（跑一次）
+### 阶段一：规划（大任务入口，跑一次）
 
 ```
-/dev:plan
+/dev-plan
 ```
 
-读取设计文档，产出：
-- **GitHub Issues**：带 checkpoint 表格、维度标注、spike issue、inherited obligations 的任务
-- **CLAUDE.md**（每个 repo 一份）：每次迭代前 agent 读的上下文
+读取设计文档、GitHub issue/PR/RFC 或用户描述的大任务，产出：
+- **GitHub Issues**：原子任务、checkpoint 表格、维度标注、spike issue、inherited obligations、parent/child graph
+- **`.coder-loop/runtime` 队列**：本地 ignored runtime state，供 loop 消费
+- **target `.coder-loop/workflow.md`**：若缺失，需要先创建或补齐项目级命令、PR/evidence/review policy
+
+`/dev-plan` 不实现代码、不创建 PR、不启动 loop，除非用户明确要求 plan 后直接运行。写完 runtime queue 后必须先运行 schema check：
+
+```bash
+bun src/loop.ts --target-cwd <target-repo-path> --check-runtime
+```
 
 ### 阶段二：循环
 
 ```
-/dev:loop        # 无限循环
-/dev:loop 10     # 最多 10 轮
+/dev-loop        # 无限循环
+/dev-loop 10     # 最多 10 轮
 ```
 
-循环交替运行 iteration agent 和 review agent。删除 `.dev-loop` 可随时停止。
+循环只消费 `/dev-plan` 准备好的现有 issue 队列，交替运行 iteration agent 和 review agent。删除 `.dev-loop` 可随时停止。
 
 ---
 
@@ -100,8 +107,8 @@ Agent prompt 是另一层状态机：iteration/review 通过 `prompts/` 下的 f
 | 文件 | 说明 |
 |---|---|
 | `src/loop.ts` | 循环状态机。创建 `.dev-loop`，交替 spawn 两个 agent，捕获输出写 trace |
-| `.claude/commands/dev:plan.md` | plan skill。信号结构定义：checkpoint 表格、维度、spike、obligations |
-| `.claude/commands/dev:loop.md` | loop skill。启动迭代循环 |
+| `.claude/commands/dev-plan.md` | 大任务 intake skill。先生成原子 GitHub issues、checkpoint、parent/child graph 和 runtime queue |
+| `.claude/commands/dev-loop.md` | loop skill。消费现有队列并启动迭代循环 |
 | `dev-iter.md` | iteration agent 入口 prompt。绑定运行时输入并指向 iteration fragments |
 | `dev-review.md` | review agent 入口 prompt。绑定运行时输入并指向 review fragments |
 | `prompts/common/` | 程序/agent 边界、GitHub 路由、状态文件不变量 |
@@ -110,9 +117,9 @@ Agent prompt 是另一层状态机：iteration/review 通过 `prompts/` 下的 f
 | target `.coder-loop/workflow.md` | committed 项目级 workflow/policy：命令、PR 格式、证据、review gate |
 | target `.coder-loop/runtime/` | ignored 本地运行态：config、state、shared、issues、evidence、logs |
 
-使用前需将 skills 拷贝到全局：
+使用前需将 slash commands 拷贝到全局：
 ```bash
-cp .claude/commands/dev:*.md ~/.claude/commands/
+cp .claude/commands/dev-*.md ~/.claude/commands/
 ```
 
 ## References

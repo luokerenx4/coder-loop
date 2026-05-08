@@ -10,8 +10,9 @@ autotask/coder-loop — 项目无关的 GitHub issue/PR agent loop。目标仓�
 
 - **Type check**: `bun run typecheck` (alias for `bun x tsc --noEmit`)
 - **Run orchestrator**: `bun run src/loop.ts [maxIter] [--target-cwd <path>] [--once]`
-- **Plan phase**: `/dev:plan` (读取设计文档，生成 GitHub issues + CLAUDE.md)
-- **Loop phase**: `/dev:loop [N]` (启动迭代循环，默认无限)
+- **Check runtime**: `bun run src/loop.ts --target-cwd <path> --check-runtime`
+- **Plan phase**: `/dev-plan` (大任务入口：读取设计/目标，生成 GitHub issues + `.coder-loop/runtime` 队列)
+- **Loop phase**: `/dev-loop [N]` (消费现有队列并启动迭代循环，默认无限)
 
 No test suite or linter — verification happens through checkpoint execution in target projects.
 
@@ -20,7 +21,7 @@ No test suite or linter — verification happens through checkpoint execution in
 Three-phase signal pipeline: `plan → iter → review`
 
 ```
-/dev:plan (design doc → GitHub issues with checkpoint tables)
+/dev-plan (large task/design → GitHub issues with checkpoint tables → .coder-loop/runtime queue)
     ↓
 src/loop.ts (state machine orchestrator)
     ├→ spawn iteration agent (dev-iter.md) → implement + execute checkpoints

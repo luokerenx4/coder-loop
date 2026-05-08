@@ -9,9 +9,9 @@
  */
 
 import { spawn } from "node:child_process"
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { createWriteStream, type WriteStream } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
 
 const PKG_ROOT = resolve(import.meta.dir, "..")
 const ITERATION_PROMPT = resolve(PKG_ROOT, "dev-iter.md")
@@ -120,6 +120,7 @@ type RawArgs = {
 	requireBrowserEvidence: boolean | null
 	once: boolean
 	dryRun: boolean
+	checkRuntime: boolean
 }
 
 type LoopConfig = {
@@ -155,6 +156,12 @@ type LoopOptions = {
 	claudeExtraArgs: string[]
 	maxIterations: number
 	dryRun: boolean
+	checkRuntime: boolean
+}
+
+type RuntimeCheckError = {
+	path: string
+	message: string
 }
 
 type AgentRunStatus = {
@@ -206,6 +213,7 @@ function parseArgs(): RawArgs {
 		requireBrowserEvidence: null,
 		once: false,
 		dryRun: false,
+		checkRuntime: false,
 	}
 
 	const args = process.argv.slice(2)
@@ -251,6 +259,10 @@ function parseArgs(): RawArgs {
 				rejectInlineValue(inlineValue, name)
 				raw.dryRun = true
 				break
+			case "--check-runtime":
+				rejectInlineValue(inlineValue, name)
+				raw.checkRuntime = true
+				break
 			default:
 				fail(`Unknown argument: ${arg}`)
 		}
@@ -282,6 +294,22 @@ async function main() {
 	const configPath = resolveFrom(targetCwd, rawArgs.configPath ?? DEFAULT_CONFIG_FILE)
 	const config = await loadConfig(configPath)
 	const options = buildOptions(targetCwd, configPath, rawArgs, config)
+
+	if (options.checkRuntime) {
+		const state = await loadState(options.statePath)
+		const selected = selectIssue(state, options)
+		const errors = await checkRuntime(options, state)
+		if (errors.length > 0) {
+			console.error(`Runtime check failed: ${errors.length} error(s)`)
+			for (const error of errors) console.error(`- ${error.path}: ${error.message}`)
+			process.exit(1)
+		}
+		console.error(`Runtime check passed: target=${options.targetCwd}`)
+		console.error(`Runtime check passed: repo=${options.repository}`)
+		console.error(`Runtime check passed: state=${options.statePath}`)
+		console.error(`Runtime check passed: queue=${state.queue.length}, selected=${selected ? `#${selected.item.issue}` : "none"}`)
+		return
+	}
 
 	await ensureRuntime(options)
 
@@ -455,6 +483,7 @@ function buildOptions(targetCwd: string, configPath: string, raw: RawArgs, confi
 		claudeExtraArgs: config.claudeExtraArgs,
 		maxIterations,
 		dryRun: raw.dryRun,
+		checkRuntime: raw.checkRuntime,
 	}
 }
 
@@ -491,6 +520,52 @@ async function ensureRuntime(options: LoopOptions): Promise<void> {
 	await assertReadable(options.statePath, "state")
 	await assertPromptFragmentsReadable()
 	await mkdir(options.logDir, { recursive: true })
+}
+
+async function checkRuntime(options: LoopOptions, state: LoopState): Promise<RuntimeCheckError[]> {
+	const errors: RuntimeCheckError[] = []
+	const seenIssues = new Set<number>()
+
+	if (state.version !== 1) pushCheckError(errors, "state.version", "must be 1")
+	if (state.repository !== options.repository) pushCheckError(errors, "state.repository", `must match configured repository ${options.repository}`)
+	if (state.baseBranch !== options.baseBranch) pushCheckError(errors, "state.baseBranch", `must match configured baseBranch ${options.baseBranch}`)
+
+	await checkDirectory(options.targetCwd, "targetCwd", errors)
+	await checkFile(options.configPath, "config", errors)
+	await checkFile(options.workflowPath, "workflow", errors)
+	await checkFile(options.sharedContextPath, "shared context", errors)
+	await checkFile(options.statePath, "state", errors)
+	await checkDirectory(options.issueDir, "issueDir", errors)
+	await checkDirectory(options.evidenceRootDir, "evidenceDir", errors)
+	await checkDirectory(options.logDir, "logDir", errors)
+
+	for (const [index, item] of state.queue.entries()) {
+		const label = `state.queue[${index}]`
+		if (seenIssues.has(item.issue)) pushCheckError(errors, `${label}.issue`, `duplicate issue #${item.issue}`)
+		seenIssues.add(item.issue)
+		if (!Number.isInteger(item.issue) || item.issue <= 0) pushCheckError(errors, `${label}.issue`, "must be a positive integer")
+		if (!Number.isInteger(item.attempts) || item.attempts < 0) pushCheckError(errors, `${label}.attempts`, "must be a non-negative integer")
+		if (item.title.trim() === "") pushCheckError(errors, `${label}.title`, "must not be empty")
+		if (item.priority.trim() === "") pushCheckError(errors, `${label}.priority`, "must not be empty")
+		if (item.branch !== null && item.branch.trim() === "") pushCheckError(errors, `${label}.branch`, "must be null or non-empty")
+		if (item.pr !== null && (!Number.isInteger(item.pr) || item.pr <= 0)) pushCheckError(errors, `${label}.pr`, "must be null or a positive integer")
+		if (item.lastRunId !== null && item.lastRunId.trim() === "") pushCheckError(errors, `${label}.lastRunId`, "must be null or non-empty")
+
+		const issueFile = resolveRuntimePath(options, item.issueFile, `${label}.issueFile`, errors)
+		const evidenceDir = resolveRuntimePath(options, item.evidenceDir, `${label}.evidenceDir`, errors)
+		if (issueFile) await checkFile(issueFile, `${label}.issueFile`, errors)
+		if (evidenceDir) await checkDirectory(evidenceDir, `${label}.evidenceDir`, errors)
+	}
+
+	if (state.current) {
+		const currentItem = state.queue.find((item) => item.issue === state.current?.issue)
+		if (!currentItem) pushCheckError(errors, "state.current.issue", `issue #${state.current.issue} is not present in queue`)
+		else if (!isActionableStatus(currentItem.status)) pushCheckError(errors, "state.current.issue", `issue #${state.current.issue} has non-actionable status ${currentItem.status}`)
+		if (state.current.runId.trim() === "") pushCheckError(errors, "state.current.runId", "must not be empty")
+		if (!isIsoDateTime(state.current.startedAt)) pushCheckError(errors, "state.current.startedAt", "must be an ISO date string")
+	}
+
+	return errors
 }
 
 async function assertPromptFragmentsReadable(): Promise<void> {
@@ -777,6 +852,49 @@ function agentStatusPath(outputPath: string): string {
 
 function resolveFrom(base: string, path: string): string {
 	return isAbsolute(path) ? path : resolve(base, path)
+}
+
+function resolveRuntimePath(options: LoopOptions, path: string, label: string, errors: RuntimeCheckError[]): string | null {
+	if (path.trim() === "") {
+		pushCheckError(errors, label, "must not be empty")
+		return null
+	}
+	const resolved = resolveFrom(options.targetCwd, path)
+	if (!isWithin(options.targetCwd, resolved)) pushCheckError(errors, label, `must resolve inside target cwd: ${options.targetCwd}`)
+	return resolved
+}
+
+function isWithin(base: string, path: string): boolean {
+	const rel = relative(base, path)
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
+}
+
+async function checkFile(path: string, label: string, errors: RuntimeCheckError[]): Promise<void> {
+	try {
+		const info = await stat(path)
+		if (!info.isFile()) pushCheckError(errors, label, "must be a file")
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") pushCheckError(errors, label, `missing file: ${path}`)
+		else throw error
+	}
+}
+
+async function checkDirectory(path: string, label: string, errors: RuntimeCheckError[]): Promise<void> {
+	try {
+		const info = await stat(path)
+		if (!info.isDirectory()) pushCheckError(errors, label, "must be a directory")
+	} catch (error) {
+		if (isNodeError(error) && error.code === "ENOENT") pushCheckError(errors, label, `missing directory: ${path}`)
+		else throw error
+	}
+}
+
+function pushCheckError(errors: RuntimeCheckError[], path: string, message: string): void {
+	errors.push({ path, message })
+}
+
+function isIsoDateTime(value: string): boolean {
+	return !Number.isNaN(Date.parse(value))
 }
 
 function makeRunId(issue: number | null): string {

@@ -13,7 +13,10 @@ For the selected issue:
 - PR title/body, sections, language, and evidence formatting must satisfy workflow-defined requirements;
 - PR body or PR-thread evidence must state CI detection and local CI-parity status when the project has reproducible CI;
 - once an implementation PR exists, implementation/review discussion must be on the PR thread;
-- if the latest retry response only appears on the issue after a PR exists, reject and require a PR-thread reply.
+- if the latest retry response only appears on the issue after a PR exists, reject and require a PR-thread reply;
+- do not edit merged PR bodies to repair missing closing keywords, rewrite evidence, or reconstruct task context.
+
+The review agent owns PR merge for accepted PR-backed work. The iteration agent must never merge PRs or close issues.
 
 ## No-PR cases
 

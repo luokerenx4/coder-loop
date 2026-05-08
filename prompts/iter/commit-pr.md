@@ -21,7 +21,7 @@ Do not stage `.coder-loop/runtime/`, `.dev-loop`, `.dev-trace.txt`, secrets, unr
 
 ## PR
 
-If an open PR already exists for this issue/branch, push updates to that PR, update the PR body when evidence changed, and post a PR comment explaining which review feedback was addressed.
+If an open PR already exists for this issue/branch, continue that PR unless it is explicitly invalid or unusable. Push updates to that PR, update the PR body when the initial evidence packet, closing keyword, or reviewer-visible proof is incomplete, wrong, or stale, and post a PR comment explaining which review feedback was addressed and which evidence was added or replaced.
 
 Otherwise create exactly one PR. The PR must follow the target workflow rules, including:
 
@@ -32,7 +32,7 @@ Otherwise create exactly one PR. The PR must follow the target workflow rules, i
 - workflow-required artifact or screenshot links when required;
 - clear mapping from every artifact, screenshot, or log excerpt to the behavior it proves.
 
-Do not merge or close anything.
+The PR body is a diff cover letter with evidence. Do not reconstruct the issue's why or move task scope/follow-up context into the PR body. Do not merge or close anything.
 
 ## Output verdict
 
