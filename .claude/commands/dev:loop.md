@@ -1,24 +1,23 @@
-# /dev:loop — Start the dev loop
+# /dev:loop — Start coder-loop
 
 Launch the orchestrator as a **detached background process** that survives this shell session.
 
 ```bash
-LOGFILE="/tmp/autotask-$$.$(date +%Y%m%d-%H%M%S).log"
-nohup autotask $ARGUMENTS > "$LOGFILE" 2>&1 &
-echo "autotask started (pid=$!, log=$LOGFILE)"
+LOGFILE="/tmp/coder-loop-$$.$(date +%Y%m%d-%H%M%S).log"
+nohup coder-loop $ARGUMENTS > "$LOGFILE" 2>&1 &
+echo "coder-loop started (pid=$!, log=$LOGFILE)"
 ```
 
-If `autotask` is not in PATH, use the full path:
+If `coder-loop` is not in PATH, use the full path:
 ```bash
-LOGFILE="/tmp/autotask-$$.$(date +%Y%m%d-%H%M%S).log"
-nohup /root/.bun/bin/bun run /root/work/autotask/src/loop.ts $ARGUMENTS > "$LOGFILE" 2>&1 &
-echo "autotask started (pid=$!, log=$LOGFILE)"
+LOGFILE="/tmp/coder-loop-$$.$(date +%Y%m%d-%H%M%S).log"
+nohup bun /path/to/coder-loop/src/loop.ts $ARGUMENTS > "$LOGFILE" 2>&1 &
+echo "coder-loop started (pid=$!, log=$LOGFILE)"
 ```
 
 - No argument: run indefinitely until review agent stops the loop
 - Pass a number to limit iterations, e.g. `/dev:loop 10`
-- `--resume-from=review`: skip iteration agent on first round, go straight to review (use when iteration completed but review never ran)
-- `--resume-from=iter`: start from iteration agent as normal (default behavior, explicit)
+- Recovery/resume is derived from `.coder-loop/runtime/state.json` `current.phase`: `review` resumes review without rerunning iteration; `iteration` resumes/continues iteration.
 
 Monitor: `tail -f $LOGFILE`
 Stop: `rm .dev-loop`

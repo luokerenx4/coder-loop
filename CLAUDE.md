@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-autotask — 无人值守开发循环框架。给定设计文档，自动转化为 checkpoint 驱动的 GitHub issues，然后交替运行 iteration agent（实现）和 review agent（验证）直到任务完成。
+autotask/coder-loop — 项目无关的 GitHub issue/PR agent loop。目标仓库提供 committed `.coder-loop/workflow.md` 和 ignored `.coder-loop/runtime/` 本地状态后，loop 交替运行 iteration agent（实现/证据/PR）和 review agent（审查/merge/close/state transition）直到队列完成。
 
 ## Commands
 
 - **Type check**: `bun run typecheck` (alias for `bun x tsc --noEmit`)
-- **Run orchestrator**: `bun run src/loop.ts [maxIter] [--resume-from=iter|review]`
+- **Run orchestrator**: `bun run src/loop.ts [maxIter] [--target-cwd <path>] [--once]`
 - **Plan phase**: `/dev:plan` (读取设计文档，生成 GitHub issues + CLAUDE.md)
 - **Loop phase**: `/dev:loop [N]` (启动迭代循环，默认无限)
 
@@ -29,9 +29,11 @@ src/loop.ts (state machine orchestrator)
     └→ repeat until issue closed or .dev-loop deleted
 ```
 
-**Orchestrator** (`src/loop.ts`): Pure state machine. Creates `.dev-loop` as on-switch, alternates spawning `claude -p` with iteration/review prompts. All business state lives in GitHub issues — agents are stateless and read issue context from scratch each round.
+**Orchestrator** (`src/loop.ts`): Pure program state machine. Creates `.dev-loop` as on-switch, reads target `.coder-loop/runtime/state.json`, selects actionable issues, alternates spawning `claude -p` with iteration/review prompts, and writes trace/log/status files. It does not judge issue completion, evidence sufficiency, PR correctness, or parent closure.
 
-**Agent communication**: No shared memory. Iteration agent writes checkpoint results to `.dev-trace.txt`. Review agent reads trace, posts feedback as issue comments. Next iteration agent reads those comments.
+**Target contract**: Target repositories keep committed policy in `.coder-loop/workflow.md` and optional `.coder-loop/prompts/` or `.coder-loop/templates/`. Local runtime files live under `.coder-loop/runtime/` and must not be committed.
+
+**Agent communication**: Iteration writes local handoff/evidence and PR updates; review reads trace, GitHub issue/PR live state, target workflow, and handoff. Durable task semantics belong in GitHub issues/PRs; `.coder-loop/runtime/` is local scheduling and handoff state.
 
 ## Key Design Concepts
 

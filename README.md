@@ -53,18 +53,22 @@ plan 在任务分解时扫描风险信号，为高风险假设创建 spike issue
 
 ### 无状态运行
 
-loop.ts 是纯状态机：创建 `.dev-loop` → 交替 spawn agent → 检查 `.dev-loop` 是否存在。
+coder-loop 是项目无关的 GitHub issue/PR loop。目标仓库只要提供 `.coder-loop/workflow.md` 和 `.coder-loop/runtime/` 下的本地运行态，并且本地 `gh` 有权限访问对应 repository，就可以运行。
 
-所有业务状态收敛在 GitHub issue 中：
+loop.ts 是程序状态机：创建 `.dev-loop` → 选择 actionable issue → 根据 `state.current.phase` spawn iteration 或 review agent → 捕获输出写 trace/status → 检查 `.dev-loop` 是否存在。它只做确定性调度，不判断 issue 是否完成、证据是否充分、PR 是否正确、parent 是否可关闭。
 
-| 状态 | 存储位置 |
-|---|---|
-| 任务内容和 checkpoint 定义 | issue body |
-| 任务进度 | issue labels (in-progress / review / blocked) |
-| 迭代反馈 | issue comments（review agent 写，iteration agent 读） |
-| 当前迭代的执行证据 | `.dev-trace.txt`（每轮覆写，不持久） |
+Agent prompt 是另一层状态机：iteration/review 通过 `prompts/` 下的 fragment 做语义判断。每个 fragment 代表一个阶段，给出输入、目标、禁止事项、允许 verdict 和下一 fragment。程序只把 fragment 路径索引和目标 workflow 注入入口 prompt，并校验 fragment 文件可读；下一步选择仍由 agent 按 prompt 和目标 workflow 判断。
 
-每次 iteration agent 和 review agent 被 spawn 时，它们从零开始，读 issue 获取全部上下文。agent 之间没有共享内存，唯一通信渠道是 issue comments。
+目标仓库的 `.coder-loop/` 分为两部分：
+
+| 路径 | 是否提交 | 说明 |
+|---|---|---|
+| `.coder-loop/workflow.md` | 是 | 项目级工作流、PR/evidence/review policy |
+| `.coder-loop/prompts/` | 是，可选 | 项目级 prompt 扩展 |
+| `.coder-loop/templates/` | 是，可选 | PR/issue/evidence 模板 |
+| `.coder-loop/runtime/` | 否 | 本地 queue/state/handoff/evidence/logs/config |
+
+每次 iteration agent 和 review agent 被 spawn 时，它们从零开始，读取 GitHub issue/PR live state、目标 workflow、shared context、issue handoff 和 trace。agent 之间没有共享内存；持久业务语义应落在 GitHub issue/PR，runtime 文件只用于本地调度和交接。
 
 ---
 
@@ -98,8 +102,13 @@ loop.ts 是纯状态机：创建 `.dev-loop` → 交替 spawn agent → 检查 `
 | `src/loop.ts` | 循环状态机。创建 `.dev-loop`，交替 spawn 两个 agent，捕获输出写 trace |
 | `.claude/commands/dev:plan.md` | plan skill。信号结构定义：checkpoint 表格、维度、spike、obligations |
 | `.claude/commands/dev:loop.md` | loop skill。启动迭代循环 |
-| `dev-iter.md` | iteration agent prompt。信号产生：实现 + 执行 checkpoint + 报告结果 |
-| `dev-review.md` | review agent prompt。信号消费：审计 checkpoint、维度覆盖、obligations |
+| `dev-iter.md` | iteration agent 入口 prompt。绑定运行时输入并指向 iteration fragments |
+| `dev-review.md` | review agent 入口 prompt。绑定运行时输入并指向 review fragments |
+| `prompts/common/` | 程序/agent 边界、GitHub 路由、状态文件不变量 |
+| `prompts/iter/` | iteration agent 的分阶段 fragments：读上下文、分类、实现、验证、PR、handoff、final |
+| `prompts/review/` | review agent 的分阶段 fragments：读证据、PR/evidence/code/closure gates、动作、状态更新、global assessment、stop/final |
+| target `.coder-loop/workflow.md` | committed 项目级 workflow/policy：命令、PR 格式、证据、review gate |
+| target `.coder-loop/runtime/` | ignored 本地运行态：config、state、shared、issues、evidence、logs |
 
 使用前需将 skills 拷贝到全局：
 ```bash

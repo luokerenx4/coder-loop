@@ -16,16 +16,17 @@ import { isAbsolute, resolve } from "node:path"
 const PKG_ROOT = resolve(import.meta.dir, "..")
 const ITERATION_PROMPT = resolve(PKG_ROOT, "dev-iter.md")
 const REVIEW_PROMPT = resolve(PKG_ROOT, "dev-review.md")
+const PROMPT_ROOT = resolve(PKG_ROOT, "prompts")
 
-const DEFAULT_CONFIG_FILE = ".coder-loop/config.json"
+const DEFAULT_CONFIG_FILE = ".coder-loop/runtime/config.json"
 const DEFAULT_WORKFLOW_FILE = ".coder-loop/workflow.md"
-const DEFAULT_SHARED_FILE = ".coder-loop/shared.md"
-const DEFAULT_STATE_FILE = ".coder-loop/state.json"
-const DEFAULT_ISSUE_DIR = ".coder-loop/issues"
-const DEFAULT_EVIDENCE_DIR = ".coder-loop/evidence"
-const DEFAULT_LOG_DIR = ".coder-loop/logs"
+const DEFAULT_SHARED_FILE = ".coder-loop/runtime/shared.md"
+const DEFAULT_STATE_FILE = ".coder-loop/runtime/state.json"
+const DEFAULT_ISSUE_DIR = ".coder-loop/runtime/issues"
+const DEFAULT_EVIDENCE_DIR = ".coder-loop/runtime/evidence"
+const DEFAULT_LOG_DIR = ".coder-loop/runtime/logs"
 
-const EXCLUDE_ENTRIES = [".dev-loop", ".dev-trace.txt", ".coder-loop"]
+const EXCLUDE_ENTRIES = [".dev-loop", ".dev-trace.txt", ".coder-loop/runtime"]
 const QUEUE_STATUSES = [
 	"queued",
 	"in_progress",
@@ -35,6 +36,36 @@ const QUEUE_STATUSES = [
 	"done",
 ] as const
 const ACTIONABLE_STATUSES = ["queued", "in_progress", "changes_requested"] as const
+const PROMPT_FRAGMENTS = [
+	{ id: "common/runtime-contract", role: "common", path: "common/runtime-contract.md" },
+	{ id: "common/github-routing", role: "common", path: "common/github-routing.md" },
+	{ id: "common/state-contract", role: "common", path: "common/state-contract.md" },
+	{ id: "iter/index", role: "iter", path: "iter/index.md" },
+	{ id: "iter/read-context", role: "iter", path: "iter/read-context.md" },
+	{ id: "iter/classify-scope", role: "iter", path: "iter/classify-scope.md" },
+	{ id: "iter/implement", role: "iter", path: "iter/implement.md" },
+	{ id: "iter/verify-evidence", role: "iter", path: "iter/verify-evidence.md" },
+	{ id: "iter/commit-pr", role: "iter", path: "iter/commit-pr.md" },
+	{ id: "iter/handoff", role: "iter", path: "iter/handoff.md" },
+	{ id: "iter/final", role: "iter", path: "iter/final.md" },
+	{ id: "review/index", role: "review", path: "review/index.md" },
+	{ id: "review/read-evidence", role: "review", path: "review/read-evidence.md" },
+	{ id: "review/trace-honesty", role: "review", path: "review/trace-honesty.md" },
+	{ id: "review/pr-protocol", role: "review", path: "review/pr-protocol.md" },
+	{ id: "review/evidence-gate", role: "review", path: "review/evidence-gate.md" },
+	{ id: "review/code-gate", role: "review", path: "review/code-gate.md" },
+	{ id: "review/issue-closure-gate", role: "review", path: "review/issue-closure-gate.md" },
+	{ id: "review/action-retry", role: "review", path: "review/action-retry.md" },
+	{ id: "review/action-expand-parent", role: "review", path: "review/action-expand-parent.md" },
+	{ id: "review/action-accept-pr", role: "review", path: "review/action-accept-pr.md" },
+	{ id: "review/action-accept-no-pr", role: "review", path: "review/action-accept-no-pr.md" },
+	{ id: "review/action-skip", role: "review", path: "review/action-skip.md" },
+	{ id: "review/action-blocked", role: "review", path: "review/action-blocked.md" },
+	{ id: "review/action-stop", role: "review", path: "review/action-stop.md" },
+	{ id: "review/update-state", role: "review", path: "review/update-state.md" },
+	{ id: "review/global-assessment", role: "review", path: "review/global-assessment.md" },
+	{ id: "review/final", role: "review", path: "review/final.md" },
+] as const satisfies readonly PromptFragment[]
 
 let logStream: WriteStream | null = null
 
@@ -42,6 +73,13 @@ type QueueStatus = (typeof QUEUE_STATUSES)[number]
 type ActionableStatus = (typeof ACTIONABLE_STATUSES)[number]
 type LoopPhase = "iteration" | "review"
 type AgentLabel = "iter" | "review"
+type PromptFragmentRole = "common" | "iter" | "review"
+
+type PromptFragment = {
+	id: string
+	role: PromptFragmentRole
+	path: string
+}
 
 type QueueItem = {
 	issue: number
@@ -262,7 +300,7 @@ async function main() {
 	log(`=== coder-loop started (pid=${process.pid}, cwd=${options.targetCwd}) ===`)
 	log(`Config: maxIterations=${formatMaxIterations(options.maxIterations)}`)
 	log(`Repo=${options.repository}`)
-	log(`Prompt files: iter=${ITERATION_PROMPT}, review=${REVIEW_PROMPT}`)
+	log(`Prompt files: iter=${ITERATION_PROMPT}, review=${REVIEW_PROMPT}, fragments=${PROMPT_ROOT}`)
 	log(`Workflow=${options.workflowPath}`)
 	log(`State=${options.statePath}`)
 
@@ -283,7 +321,7 @@ async function main() {
 		const selected = selectIssue(state, options)
 
 		if (!selected) {
-			await writeFile(options.traceFile, "No actionable issue found in .coder-loop/state.json. Review must assess whether to stop.\n")
+			await writeFile(options.traceFile, "No actionable issue found in .coder-loop/runtime/state.json. Review must assess whether to stop.\n")
 			log("No actionable issue selected; running review for global state assessment.")
 			await runReview(options, {
 				issue: "",
@@ -392,7 +430,7 @@ function buildOptions(targetCwd: string, configPath: string, raw: RawArgs, confi
 	const evidenceRootDir = resolveFrom(targetCwd, config.evidenceDir ?? DEFAULT_EVIDENCE_DIR)
 	const logDir = resolveFrom(targetCwd, config.logDir ?? DEFAULT_LOG_DIR)
 	const repository = raw.repository ?? config.repository
-	if (!repository) fail("Repository is required. Set --repo or .coder-loop/config.json repository.")
+	if (!repository) fail("Repository is required. Set --repo or .coder-loop/runtime/config.json repository.")
 
 	const maxIterations = raw.once ? 1 : (raw.maxIterations ?? Number.POSITIVE_INFINITY)
 	const requireBrowserEvidence = raw.requireBrowserEvidence ?? config.requireAgentBrowserScreenshots ?? false
@@ -451,7 +489,12 @@ async function ensureRuntime(options: LoopOptions): Promise<void> {
 	await assertReadable(options.workflowPath, "workflow")
 	await assertReadable(options.sharedContextPath, "shared context")
 	await assertReadable(options.statePath, "state")
+	await assertPromptFragmentsReadable()
 	await mkdir(options.logDir, { recursive: true })
+}
+
+async function assertPromptFragmentsReadable(): Promise<void> {
+	await Promise.all(PROMPT_FRAGMENTS.map((fragment) => assertReadable(resolve(PROMPT_ROOT, fragment.path), `prompt fragment ${fragment.id}`)))
 }
 
 async function assertReadable(path: string, label: string): Promise<void> {
@@ -577,6 +620,8 @@ function renderPrompt(template: string, options: LoopOptions, context: RenderCon
 		["{{LOG_DIR}}", options.logDir],
 		["{{TRACE_FILE}}", options.traceFile],
 		["{{LOOP_FILE}}", options.loopFile],
+		["{{PROMPT_ROOT}}", PROMPT_ROOT],
+		["{{PROMPT_FRAGMENT_INDEX}}", renderPromptFragmentIndex()],
 		["{{REQUIRE_BROWSER_EVIDENCE}}", String(options.requireBrowserEvidence)],
 		["{{ISSUE_RUN_MODE}}", context.issueRun.mode],
 		["{{RECOVERY_MODE}}", context.issueRun.mode],
@@ -588,6 +633,12 @@ function renderPrompt(template: string, options: LoopOptions, context: RenderCon
 	]
 
 	return replacements.reduce((prompt, [placeholder, value]) => prompt.replaceAll(placeholder, value), template)
+}
+
+function renderPromptFragmentIndex(): string {
+	return PROMPT_FRAGMENTS
+		.map((fragment) => `- ${fragment.id} (${fragment.role}): ${resolve(PROMPT_ROOT, fragment.path)}`)
+		.join("\n")
 }
 
 async function runAgent(options: LoopOptions, label: AgentLabel, prompt: string, outputPath: string): Promise<{ output: string; code: number }> {
