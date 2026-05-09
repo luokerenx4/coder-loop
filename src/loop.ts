@@ -312,6 +312,7 @@ async function main() {
 	}
 
 	await ensureRuntime(options)
+	await assertRuntimeValid(options)
 
 	if (options.dryRun) {
 		const state = await loadState(options.statePath)
@@ -346,6 +347,7 @@ async function main() {
 		log(`--- Iteration ${iteration} ---`)
 
 		const state = await loadState(options.statePath)
+		await assertRuntimeValid(options, state)
 		const selected = selectIssue(state, options)
 
 		if (!selected) {
@@ -522,6 +524,15 @@ async function ensureRuntime(options: LoopOptions): Promise<void> {
 	await mkdir(options.logDir, { recursive: true })
 }
 
+async function assertRuntimeValid(options: LoopOptions, state?: LoopState): Promise<void> {
+	const runtimeState = state ?? await loadState(options.statePath)
+	const errors = await checkRuntime(options, runtimeState)
+	if (errors.length === 0) return
+
+	const details = errors.map((error) => `- ${error.path}: ${error.message}`).join("\n")
+	fail(`Runtime validation failed:\n${details}`)
+}
+
 async function checkRuntime(options: LoopOptions, state: LoopState): Promise<RuntimeCheckError[]> {
 	const errors: RuntimeCheckError[] = []
 	const seenIssues = new Set<number>()
@@ -538,6 +549,21 @@ async function checkRuntime(options: LoopOptions, state: LoopState): Promise<Run
 	await checkDirectory(options.issueDir, "issueDir", errors)
 	await checkDirectory(options.evidenceRootDir, "evidenceDir", errors)
 	await checkDirectory(options.logDir, "logDir", errors)
+	const runtimeRoot = resolve(options.targetCwd, ".coder-loop/runtime")
+	checkInside(options.targetCwd, options.configPath, "config", errors)
+	checkInside(options.targetCwd, options.workflowPath, "workflow", errors)
+	checkInside(options.targetCwd, options.sharedContextPath, "shared context", errors)
+	checkInside(options.targetCwd, options.statePath, "state", errors)
+	checkInside(options.targetCwd, options.issueDir, "issueDir", errors)
+	checkInside(options.targetCwd, options.evidenceRootDir, "evidenceDir", errors)
+	checkInside(options.targetCwd, options.logDir, "logDir", errors)
+	checkInside(runtimeRoot, options.configPath, "config", errors)
+	checkInside(runtimeRoot, options.sharedContextPath, "shared context", errors)
+	checkInside(runtimeRoot, options.statePath, "state", errors)
+	checkInside(runtimeRoot, options.issueDir, "issueDir", errors)
+	checkInside(runtimeRoot, options.evidenceRootDir, "evidenceDir", errors)
+	checkInside(runtimeRoot, options.logDir, "logDir", errors)
+	if (isWithin(runtimeRoot, options.workflowPath)) pushCheckError(errors, "workflow", "must be project policy outside .coder-loop/runtime")
 
 	for (const [index, item] of state.queue.entries()) {
 		const label = `state.queue[${index}]`
@@ -551,8 +577,8 @@ async function checkRuntime(options: LoopOptions, state: LoopState): Promise<Run
 		if (item.pr !== null && (!Number.isInteger(item.pr) || item.pr <= 0)) pushCheckError(errors, `${label}.pr`, "must be null or a positive integer")
 		if (item.lastRunId !== null && item.lastRunId.trim() === "") pushCheckError(errors, `${label}.lastRunId`, "must be null or non-empty")
 
-		const issueFile = resolveRuntimePath(options, item.issueFile, `${label}.issueFile`, errors)
-		const evidenceDir = resolveRuntimePath(options, item.evidenceDir, `${label}.evidenceDir`, errors)
+		const issueFile = resolveRuntimePath(options, item.issueFile, `${label}.issueFile`, options.issueDir, errors)
+		const evidenceDir = resolveRuntimePath(options, item.evidenceDir, `${label}.evidenceDir`, options.evidenceRootDir, errors)
 		if (issueFile) await checkFile(issueFile, `${label}.issueFile`, errors)
 		if (evidenceDir) await checkDirectory(evidenceDir, `${label}.evidenceDir`, errors)
 	}
@@ -636,11 +662,12 @@ function selectIssue(state: LoopState, options: LoopOptions): SelectedIssue | nu
 		: state.queue.find((item) => isActionableStatus(item.status))
 	if (!selected) return null
 
-	return {
-		item: selected,
-		issueFile: resolveFrom(options.targetCwd, selected.issueFile),
-		evidenceDir: resolveFrom(options.targetCwd, selected.evidenceDir),
-	}
+	const issueFile = resolveFrom(options.targetCwd, selected.issueFile)
+	const evidenceDir = resolveFrom(options.targetCwd, selected.evidenceDir)
+	if (!isWithin(options.issueDir, issueFile)) fail(`Selected issue file must resolve inside issueDir: ${selected.issueFile}`)
+	if (!isWithin(options.evidenceRootDir, evidenceDir)) fail(`Selected evidence directory must resolve inside evidenceDir: ${selected.evidenceDir}`)
+
+	return { item: selected, issueFile, evidenceDir }
 }
 
 function markIterationStarted(state: LoopState, issue: number, runId: string, countAttempt: boolean): void {
@@ -854,14 +881,19 @@ function resolveFrom(base: string, path: string): string {
 	return isAbsolute(path) ? path : resolve(base, path)
 }
 
-function resolveRuntimePath(options: LoopOptions, path: string, label: string, errors: RuntimeCheckError[]): string | null {
+function resolveRuntimePath(options: LoopOptions, path: string, label: string, root: string, errors: RuntimeCheckError[]): string | null {
 	if (path.trim() === "") {
 		pushCheckError(errors, label, "must not be empty")
 		return null
 	}
 	const resolved = resolveFrom(options.targetCwd, path)
-	if (!isWithin(options.targetCwd, resolved)) pushCheckError(errors, label, `must resolve inside target cwd: ${options.targetCwd}`)
+	checkInside(options.targetCwd, resolved, label, errors)
+	checkInside(root, resolved, label, errors)
 	return resolved
+}
+
+function checkInside(root: string, path: string, label: string, errors: RuntimeCheckError[]): void {
+	if (!isWithin(root, path)) pushCheckError(errors, label, `must resolve inside ${root}: ${path}`)
 }
 
 function isWithin(base: string, path: string): boolean {
