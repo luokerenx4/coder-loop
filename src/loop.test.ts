@@ -22,6 +22,7 @@ import {
 	parseSessionIdFromRunnerStream,
 	renderFragmentIndex,
 	renderPrompt,
+	resolveWorkflowFileConfigBinding,
 	stripRoleEntryFrontmatter,
 	resolveBinding,
 	selectRunnerForPhase,
@@ -98,6 +99,7 @@ function makeConfig(overrides: Partial<ConfigBindings> = {}): ConfigBindings {
 	return {
 		repository: "mouriya-s-lab/coder-loop",
 		baseBranch: "main",
+		workflowFile: resolve(REPO_ROOT, ".coder-loop/workflow.md"),
 		requireBrowserEvidence: false,
 		...overrides,
 	}
@@ -108,7 +110,6 @@ function makeRuntime(overrides: Partial<RuntimeBindings> = {}): RuntimeBindings 
 		runId: "run-fixture",
 		targetCwd: REPO_ROOT,
 		agentCwd: REPO_ROOT,
-		workflowPath: resolve(REPO_ROOT, ".coder-loop/workflow.md"),
 		sharedContextPath: resolve(TEST_ROOT, "chains/fixture/shared.md"),
 		stateFile: "the central state DB",
 		currentIssueFile: resolve(TEST_ROOT, "chains/fixture/issues/333.md"),
@@ -143,7 +144,6 @@ function makeOptions(preset = makePreset()): LoopOptions {
 	return {
 		targetCwd: REPO_ROOT,
 		configPath: resolve(TEST_ROOT, "config.json"),
-		workflowPath: resolve(REPO_ROOT, ".coder-loop/workflow.md"),
 		sharedContextPath: resolve(TEST_ROOT, "shared.md"),
 		stateDbPath: resolve(TEST_ROOT, "db.sqlite"),
 		issueDir: resolve(TEST_ROOT, "issues"),
@@ -270,13 +270,26 @@ describe("ItemRecord prompt bindings", () => {
 })
 
 describe("runtime binding helpers", () => {
+	test("workflow file config binding keeps the conventional target path when chain metadata is unseeded", () => {
+		expect(resolveWorkflowFileConfigBinding(REPO_ROOT, null)).toBe(resolve(REPO_ROOT, ".coder-loop/workflow.md"))
+		expect(resolveWorkflowFileConfigBinding(REPO_ROOT, "docs/workflow.md")).toBe(resolve(REPO_ROOT, "docs/workflow.md"))
+		expect(resolveWorkflowFileConfigBinding(REPO_ROOT, resolve(REPO_ROOT, "custom/workflow.md"))).toBe(resolve(REPO_ROOT, "custom/workflow.md"))
+	})
+
 	test("buildConfigBindings returns transparent config data", () => {
 		const options = makeOptions()
 		const config = buildConfigBindings({ ...options, configBindings: { ...options.configBindings, customField: "custom" } })
 		expect(config.repository).toBe("mouriya-s-lab/coder-loop")
 		expect(config.baseBranch).toBe("main")
+		expect(config.workflowFile).toBe(resolve(REPO_ROOT, ".coder-loop/workflow.md"))
 		expect(config.requireBrowserEvidence).toBe(false)
 		expect(config.customField).toBe("custom")
+	})
+
+	test("workflow file is a config binding, not a runtime binding", () => {
+		const ctx: ResolveContext = { item: makeItem(), config: makeConfig(), runtime: makeRuntime() }
+		expect(resolveBinding({ kind: "config", field: "workflowFile", fallback: { kind: "none" } }, ctx)).toBe(resolve(REPO_ROOT, ".coder-loop/workflow.md"))
+		expect(() => resolveBinding({ kind: "runtime", key: "workflowPath" }, ctx)).toThrow(/runtime\.workflowPath: not in runtime binding whitelist/)
 	})
 
 	test("buildRuntimeBindings maps issue run context into strings", () => {
