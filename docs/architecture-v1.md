@@ -2,7 +2,7 @@
 
 > 本文讲 `stable-v1`（tip `79f16e4`）**代码实际**怎么写、怎么跑，行号引用都指向该固定快照。
 >
-> 重要前提：README 和 `#5` 描述的是**设计理想**——引擎"字符串无感"（不认识 phase 名、状态字面量、verdict 词表）、业务语义全部数据驱动地来自 preset、判断全交 LLM。**v1 代码远未达到这个理想**：状态语义、verdict 词表、status 字面量、phase 顺序大量**写死在 `src/loop.ts`**。本文以代码实然为准，最后一节专讲它与理想契约的差距——那才是 v1→v2→v3 演变的真正主线。
+> 重要前提：README 和 `#5` 描述的是**设计理想**——引擎"字符串无感"（不认识 phase 名、状态字面量、verdict 词表）、业务语义全部数据驱动地来自 preset、判断全交 LLM。理想的**准确读法是「机制归引擎、参数归 preset」**：字符串无感的目的是让状态机 DAG 由 preset 数据定义、最大化动态，**不是**让引擎放弃调度——选 item、推进 phase、按表分类从来都是引擎职责；「判断交 LLM」约束的是 issue 完成性、证据充分性这类**判断**，不约束调度机制。**v1 代码远未达到这个理想**：状态语义、verdict 词表、status 字面量、phase 顺序大量**写死在 `src/loop.ts`**——偏离不在「引擎有确定性机制」，而在机制的参数以字面量焊进代码、而非来自 preset 数据。本文以代码实然为准，最后一节专讲偏离的因果与转折点——那才是 v1→v2→v3 演变的真正主线。
 
 ## 一、它实际在干什么
 
@@ -45,15 +45,37 @@ flowchart TD
 
 ## 四、v1 代码 vs 理想契约（#5）—— 真正的演变主线
 
-`#5` 的理想是引擎字符串无感、业务语义数据驱动地来自 preset。v1 代码与此的差距：
+先把 `#5` 理想读准（呼应文首前提）：**字符串无感是为了让状态机 DAG 最大化动态**——phase 列表、状态分类、转移、路由全部由 preset 数据定义，引擎照表执行。`[statuses]` 的 continuable/terminal 本身就是一张（无方向的）状态机参数表，`#5` Stage 4 §B 还预留了带方向的 `[[transitions]]` 候选。所以衡量偏离的轴不是「引擎有没有确定性机制」，而是「**机制的参数住在哪**」。
 
-| 维度 | `#5` 理想 | v1 代码实然（写死在 loop.ts） |
-|---|---|---|
-| 状态合法集 / 转换 | 归 preset `[statuses]` | verdict 解析 + 状态转换写死（`:717` `:3504` `:2498`） |
-| review verdict 词表 | preset 定义 | `ReviewSummaryVerdict` 写死（`:717`） |
-| phase 顺序 | preset 驱动 | iteration / review 写死在主循环 |
-| issue-kind 路由 | preset prompt | 程序映射，如 `kind="blocked" → iter/resolve-blocker`（`:3242`） |
+### 转折点：#30 把误解写进决策（2026-05-11）
 
-把这些写死项真正迁到 preset，是 v2 之后、**直到今天（2026-06）仍在进行**的工作——例如 `#381`（phase metadata 入 preset.toml）、`#380`（phase order 由 preset 驱动）、`#373`（item PR 字段 preset 声明）、`#376`（issue-kind 路由入 preset prompt）、`#386`（queue unblock 由 preset statuses 驱动）。`#369` / `#370`（v3）继续这条线。
+`#5` 收口（00:27 UTC）后一小时内，`#30`（Stage 4 §B spike）走完两步：
 
-**这条"把写死在引擎里的业务语义逐步迁出、迁进 preset"的迁移，才是 v1→v2→v3 的真正主线**；daemon 化（见 `architecture-v2.md`）是并行的另一条线，它换的是执行模型，不解决业务语义硬编码。两条线不要混为一谈。
+- 第一条 comment（00:56 UTC）提出正确形态：引擎保留转移机制，`[[transitions]] when/from/to` 作为 preset 数据，引擎查表执行、查不到合法转移即 fail。
+- 第二条 comment（01:04 UTC）亲手否决：「状态转移是 preset 内部协议，不该上 L1 schema」，改为删掉引擎仅有的两处 status 读写、把 mode 分类下沉 prompt。
+
+这条否决把「引擎不硬编码字面量」过度引申成「引擎不拥有状态机」。从此引擎侧**不存在任何声明状态机参数的 preset 表面**——这个真空正是后续所有硬编码的入口。
+
+### 契约短暂达成，又被同日开始吃回
+
+- `#36`（`d135563`，2026-05-11）达成最干净点：loop.ts 1339 行，status/verdict 字面量 **0 处**。契约真正成立过。
+- 同日约 7 小时后 `#41` 开始再偏离：引擎自己 spawn `gh issue view --json labels` 取 kind（stable-v1 `:3279`）。
+- 至 stable-v1（12 天后）：loop.ts 4538 行，字面量 19 处。
+
+每个偏离的因果链相同：运维现实要求确定性转移（agent 挂死、副作用循环重放、blocked 恢复）→ `#30` 否决后没有 preset 参数表可填 → 迭代 coder-loop 的 AI 看见「引擎有代码」，就把机制连同参数一起焊进引擎：
+
+| 偏离（机制合法，参数焊死） | 引入 | stable-v1 证据 | 应有形态 |
+|---|---|---|---|
+| verdict 词表 `retry / accepted / skip / blocked / stop` + `stop` 流控 | `#115`（堵 accepted_no_pr 副作用循环） | `:717` `:1577` | 词表与 verdict→动作映射为 preset 数据 |
+| `ISSUE_KIND_VALUES` + `kind="blocked" → iter/resolve-blocker` | `#41` / `#136` | `:736` `:3242` `:3279` | kind 词表与 kind→prompt 路由为 preset 数据 |
+| `ITERATION/REVIEW SUMMARY:` watchdog marker 引擎常量 | `#56` / `#98` | `docs/reserved-strings.md` | marker 为 per-phase preset 字段 |
+| `queue unblock` 写死 `blocked → queued` | `#140` | `:2475-2498` | 转移对为 preset `[statuses]` 参数 |
+| 主循环固定「`phases[0]` = 干活、最后一个非 trigger phase = review」两槽 | `#134` 仅加 trigger 未改主结构 | `:1282` `:1316` `:2744` | 按 preset 有序 phase 列表推进 |
+
+`#142` 随后建立 `docs/reserved-strings.md` 登记表——没有移除字面量，而是把偏离制度化了。
+
+### 主线的准确表述
+
+把这些写死项迁出的工作走的正是 `#30` 第一条 comment 被否决的那条路——**机制留在引擎，参数进 preset**，且已逐项落地：`#380`（phase 顺序按 preset 推进）、`#381`（phase metadata 入 preset.toml，含 per-phase `summaryMarker`）、`#373`（item 字段 preset 声明）、`#376`（kind 路由移出引擎）、`#386`（`[statuses]` 增 `unblockable`/`entry`，unblock 参数化）；`#369`/`#370`（v3）继续。**不要把这条主线说成「业务语义不该在引擎」**——那个表述会复现 `#30` 01:04 的误读（连机制一起拆掉）。准确的验收标准是：引擎里允许状态机、verdict 分发、kind 路由这些机制，但每个参数（词表、转移表、路由映射、marker）必须可从 preset 数据读出；grep 不到字面量只是这个性质的副产品。
+
+daemon 化（见 `architecture-v2.md`）是并行的另一条线，它换的是执行模型，不解决参数焊死。两条线不要混为一谈。

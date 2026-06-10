@@ -2,7 +2,7 @@
 
 > 本文讲 `main` 上 v2 代码**实际**怎么跑。
 >
-> 与 v1（见 `architecture-v1.md`）相比，v2 换掉的是**执行模型**：单进程 while-loop → 中央 daemon + chain + 调度器 + SQLite。**业务语义、状态规则仍大量写死在程序里，和 v1 同病**——"状态/业务归 preset、引擎字符串无感"是 `#5` 的设计理想，daemon 化**没有**解决它。把这些规则迁进 preset 是另一条并行的线，直到今天（2026-06）才在推进。不要把 daemon 化误当成"引擎变干净了"。
+> 与 v1（见 `architecture-v1.md`）相比，v2 换掉的是**执行模型**：单进程 while-loop → 中央 daemon + chain + 调度器 + SQLite。**业务机制的参数仍大量以字面量写死在程序里，和 v1 同病**——理想形态是「机制归引擎、参数归 preset」（准确读法与转折点见 `architecture-v1.md` 第四节），daemon 化**没有**解决它。把参数迁进 preset 是另一条并行的线，直到今天（2026-06）才在推进。不要把 daemon 化误当成"引擎变干净了"。
 
 ## 一、业务形态（与 v1 相同）
 
@@ -39,7 +39,7 @@ flowchart TD
 - **v2 一度偏离**（`#296`，`7c4a54f`「map item status from SUMMARY marker」）：让调度器从 agent stdout 的 SUMMARY marker **推导** status，等于让引擎接管了本该 agent 写的字段——这违反 `#5`「判断交 LLM、引擎不推导」。
 - **`#345`（`04f567a`「引擎回到 v1 状态模型」）恢复**：撤销 stdout 推导，`item.status` 字段重新由 **agent 显式写、调度器只读**。
 
-关键：**`#345` 恢复的只是"字段谁写"，不是"规则归谁"。** 无论 `#296` 还是 `#345`，状态的规则仍写死在 `src/loop.ts` / 调度器里，**没有迁到 preset**。"状态/phase/kind 等业务规则真正归 preset"是今天才开始的工作：`#386`（queue unblock 由 preset statuses 驱动）、`#380`（phase order 由 preset 驱动）、`#376`（issue-kind 路由入 preset prompt）、`#381`（phase metadata 入 preset.toml）、`#373`（item PR 字段 preset 声明）。
+关键：**`#345` 恢复的只是"字段谁写"，不是"参数归谁"。** 无论 `#296` 还是 `#345`，状态机制的参数仍以字面量写死在 `src/loop.ts` / 调度器里。把参数迁进 preset（机制留在引擎）是今天才推进的工作，已落地：summary marker 成为 per-phase preset 字段（`src/loop.ts:2443` 读 `reviewPhase.summaryMarker`；`#381` phase metadata 入 preset.toml）、post-review 触发是 preset 声明的 DAG 边（`preset.toml` `trigger = { afterPhase, whenStatus }`）、`#386` 给 `[statuses]` 加 `unblockable`/`entry`/`success` 让 unblock 转移参数化、`#380` phase 顺序按 preset 推进、`#376` issue-kind 路由移出引擎、`#373` item 字段经 `[item.fields]` 声明。**仍焊死的参数**：verdict 词表与 `verdict === "stop"` 映射（`src/loop.ts:843`、`:2444`）、`ISSUE_KIND_VALUES`（`:863`）、daemon fallback status 集合（`src/daemon.ts:117-118`）、SQLite 默认 statuses（`src/sqlite-state.ts:824`）。
 
 ## 四、SQLite 状态与 GitHub-PR 耦合（v3 的起点）
 
@@ -53,6 +53,6 @@ schema v7 的两张核心表：
 ## 五、v2 解决了什么，留下什么
 
 - **解决了**（执行模型天花板）：中央 daemon 统一调度、多 chain 并发、SQLite 事务状态、统一可观测面（`status` / `daemon status`）。
-- **没解决 / 留给后续**（业务语义硬编码）：状态/phase/kind 规则仍写死引擎、item 身份焊死 issue、preset 焊 chain 级。
+- **没解决 / 留给后续**（参数焊死）：verdict 词表、kind 词表、daemon/SQLite 默认 status 集合等机制参数仍写死引擎（清单见第三节）、item 身份焊死 issue、preset 焊 chain 级。
 
-**两条独立的演变线**：daemon 化（v1→v2，换执行模型，本文）；业务语义去硬编码、迁进 preset（贯穿 v2 后期到 v3 的 `#373`/`#376`/`#380`/`#381`/`#386`/`#369`/`#370`，见 `architecture-v1.md` 第四节）。它们经常被混为一谈，但解决的是不同问题。
+**两条独立的演变线**：daemon 化（v1→v2，换执行模型，本文）；机制参数外部化进 preset——机制留引擎、参数进 preset（贯穿 v2 后期到 v3 的 `#373`/`#376`/`#380`/`#381`/`#386`/`#369`/`#370`，准确表述与 `#30` 转折点见 `architecture-v1.md` 第四节）。它们经常被混为一谈，但解决的是不同问题。
