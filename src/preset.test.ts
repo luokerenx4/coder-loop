@@ -24,39 +24,46 @@ const EXPECTED_FRAGMENTS = [
 	{ id: "plan/init-queue", role: "plan", relPath: "plan/init-queue.md" },
 	{ id: "plan/handoff", role: "plan", relPath: "plan/handoff.md" },
 	{ id: "plan/final", role: "plan", relPath: "plan/final.md" },
-	{ id: "iter/index", role: "iter", relPath: "iter/index.md" },
-	{ id: "iter/read-context", role: "iter", relPath: "iter/read-context.md" },
-	{ id: "iter/classify-scope", role: "iter", relPath: "iter/classify-scope.md" },
-	{ id: "iter/resolve-blocker", role: "iter", relPath: "iter/resolve-blocker.md" },
-	{ id: "iter/implement", role: "iter", relPath: "iter/implement.md" },
-	{ id: "iter/spike-comment", role: "iter", relPath: "iter/spike-comment.md" },
-	{ id: "iter/source-writing-spike", role: "iter", relPath: "iter/source-writing-spike.md" },
-	{ id: "iter/verify-evidence", role: "iter", relPath: "iter/verify-evidence.md" },
-	{ id: "iter/commit-pr", role: "iter", relPath: "iter/commit-pr.md" },
-	{ id: "iter/handoff", role: "iter", relPath: "iter/handoff.md" },
-	{ id: "iter/final", role: "iter", relPath: "iter/final.md" },
-	{ id: "review/index", role: "review", relPath: "review/index.md" },
-	{ id: "review/read-evidence", role: "review", relPath: "review/read-evidence.md" },
-	{ id: "review/trace-honesty", role: "review", relPath: "review/trace-honesty.md" },
-	{ id: "review/pr-protocol", role: "review", relPath: "review/pr-protocol.md" },
-	{ id: "review/source-writing-spike-gate", role: "review", relPath: "review/source-writing-spike-gate.md" },
-	{ id: "review/title-intent-gate", role: "review", relPath: "review/title-intent-gate.md" },
-	{ id: "review/evidence-gate", role: "review", relPath: "review/evidence-gate.md" },
-	{ id: "review/caveat-honesty-gate", role: "review", relPath: "review/caveat-honesty-gate.md" },
-	{ id: "review/commitment-gate", role: "review", relPath: "review/commitment-gate.md" },
-	{ id: "review/spike-followup-gate", role: "review", relPath: "review/spike-followup-gate.md" },
-	{ id: "review/code-gate", role: "review", relPath: "review/code-gate.md" },
-	{ id: "review/issue-closure-gate", role: "review", relPath: "review/issue-closure-gate.md" },
-	{ id: "review/action-retry", role: "review", relPath: "review/action-retry.md" },
-	{ id: "review/action-expand-parent", role: "review", relPath: "review/action-expand-parent.md" },
-	{ id: "review/action-accept-pr", role: "review", relPath: "review/action-accept-pr.md" },
-	{ id: "review/action-accept-no-pr", role: "review", relPath: "review/action-accept-no-pr.md" },
-	{ id: "review/action-skip", role: "review", relPath: "review/action-skip.md" },
-	{ id: "review/action-blocked", role: "review", relPath: "review/action-blocked.md" },
-	{ id: "review/action-stop", role: "review", relPath: "review/action-stop.md" },
-	{ id: "review/update-state", role: "review", relPath: "review/update-state.md" },
-	{ id: "review/global-assessment", role: "review", relPath: "review/global-assessment.md" },
-	{ id: "review/final", role: "review", relPath: "review/final.md" },
+	{ id: "quality/evidence", role: "quality", relPath: "quality/evidence.md" },
+	{ id: "quality/honesty", role: "quality", relPath: "quality/honesty.md" },
+	{ id: "quality/cleanup", role: "quality", relPath: "quality/cleanup.md" },
+	{ id: "iter/steps/research/task", role: "iter", relPath: "iter/steps/research/task.md" },
+	{ id: "iter/steps/research/report", role: "iter", relPath: "iter/steps/research/report.md" },
+	{ id: "iter/steps/research/accept", role: "iter", relPath: "iter/steps/research/accept.md" },
+	{ id: "iter/steps/resolve-blocker/task", role: "iter", relPath: "iter/steps/resolve-blocker/task.md" },
+	{ id: "iter/steps/resolve-blocker/report", role: "iter", relPath: "iter/steps/resolve-blocker/report.md" },
+	{ id: "iter/steps/resolve-blocker/accept", role: "iter", relPath: "iter/steps/resolve-blocker/accept.md" },
+	{ id: "iter/steps/implement/task", role: "iter", relPath: "iter/steps/implement/task.md" },
+	{ id: "iter/steps/implement/report", role: "iter", relPath: "iter/steps/implement/report.md" },
+	{ id: "iter/steps/implement/accept", role: "iter", relPath: "iter/steps/implement/accept.md" },
+	{ id: "iter/steps/verify/task", role: "iter", relPath: "iter/steps/verify/task.md" },
+	{ id: "iter/steps/verify/report", role: "iter", relPath: "iter/steps/verify/report.md" },
+	{ id: "iter/steps/verify/accept", role: "iter", relPath: "iter/steps/verify/accept.md" },
+	{ id: "iter/steps/submit/task", role: "iter", relPath: "iter/steps/submit/task.md" },
+	{ id: "iter/steps/submit/report", role: "iter", relPath: "iter/steps/submit/report.md" },
+	{ id: "iter/steps/submit/accept", role: "iter", relPath: "iter/steps/submit/accept.md" },
+	{ id: "iter/steps/source-spike/task", role: "iter", relPath: "iter/steps/source-spike/task.md" },
+	{ id: "iter/steps/source-spike/report", role: "iter", relPath: "iter/steps/source-spike/report.md" },
+	{ id: "iter/steps/source-spike/accept", role: "iter", relPath: "iter/steps/source-spike/accept.md" },
+	{ id: "iter/steps/spike-comment/task", role: "iter", relPath: "iter/steps/spike-comment/task.md" },
+	{ id: "iter/steps/spike-comment/report", role: "iter", relPath: "iter/steps/spike-comment/report.md" },
+	{ id: "iter/steps/spike-comment/accept", role: "iter", relPath: "iter/steps/spike-comment/accept.md" },
+	{ id: "review/steps/investigate/task", role: "review", relPath: "review/steps/investigate/task.md" },
+	{ id: "review/steps/investigate/report", role: "review", relPath: "review/steps/investigate/report.md" },
+	{ id: "review/steps/investigate/accept", role: "review", relPath: "review/steps/investigate/accept.md" },
+	{ id: "review/steps/replay/task", role: "review", relPath: "review/steps/replay/task.md" },
+	{ id: "review/steps/replay/report", role: "review", relPath: "review/steps/replay/report.md" },
+	{ id: "review/steps/replay/accept", role: "review", relPath: "review/steps/replay/accept.md" },
+	{ id: "review/spike-followup", role: "review", relPath: "review/spike-followup.md" },
+	{ id: "review/source-spike-audit", role: "review", relPath: "review/source-spike-audit.md" },
+	{ id: "review/actions/accept-pr", role: "review", relPath: "review/actions/accept-pr.md" },
+	{ id: "review/actions/accept-no-pr", role: "review", relPath: "review/actions/accept-no-pr.md" },
+	{ id: "review/actions/retry", role: "review", relPath: "review/actions/retry.md" },
+	{ id: "review/actions/expand-parent", role: "review", relPath: "review/actions/expand-parent.md" },
+	{ id: "review/actions/skip", role: "review", relPath: "review/actions/skip.md" },
+	{ id: "review/actions/blocked", role: "review", relPath: "review/actions/blocked.md" },
+	{ id: "review/actions/stop", role: "review", relPath: "review/actions/stop.md" },
+	{ id: "review/actions/state-write", role: "review", relPath: "review/actions/state-write.md" },
 ] as const
 
 const EXPECTED_VARIABLE_KEYS = [
@@ -194,18 +201,33 @@ describe("loadPreset (bundled gh-issue-pr-iteration)", () => {
 		}
 	})
 
-	test("iteration prompt owns issue kind to fragment routing instructions", async () => {
-		const [indexPrompt, readContextPrompt] = await Promise.all([
-			Bun.file(resolve(BUNDLED_PRESET_DIR, "iter/index.md")).text(),
-			Bun.file(resolve(BUNDLED_PRESET_DIR, "iter/read-context.md")).text(),
-		])
-		const routePrompt = `${indexPrompt}\n${readContextPrompt}`
+	test("iteration entry owns the orchestrator kind-to-step plan and dispatch discipline", async () => {
+		const entry = await Bun.file(resolve(BUNDLED_PRESET_DIR, "iter-entry.md")).text()
 
-		expect(routePrompt).toContain("`ISSUE_KIND` is `comment` → read `iter/spike-comment`")
-		expect(routePrompt).toContain("`ISSUE_KIND` is `code-spike` → read `iter/source-writing-spike`")
-		expect(routePrompt).toContain("`ISSUE_KIND` is `blocked` → read `iter/resolve-blocker`")
-		expect(routePrompt).toContain("`ISSUE_KIND` is `code` or empty")
-		expect(routePrompt).toContain("→ read `iter/classify-scope`")
+		// kind → step plan table
+		expect(entry).toContain("| `code` or empty (legacy) | [research?] → implement → verify → submit |")
+		expect(entry).toContain("| `blocked` | resolve-blocker → implement → verify → submit |")
+		expect(entry).toContain("| `code-spike` | [research?] → source-spike |")
+		expect(entry).toContain("| `comment` | [research?] → spike-comment |")
+		// orchestrator discipline: no execution, no task-file reads, absolute step paths for subagents
+		expect(entry).toContain("You schedule; you do not execute.")
+		expect(entry).toContain("Never read step task files.")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/iter/steps/implement/")
+		expect(entry).toContain("ITERATION SUMMARY:")
+	})
+
+	test("review entry owns the judgment phases, replay dispatch, and action files", async () => {
+		const entry = await Bun.file(resolve(BUNDLED_PRESET_DIR, "review-entry.md")).text()
+
+		expect(entry).toContain("Independent replay, never repair.")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/review/steps/replay/")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/review/steps/replay/accept.md")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/review/actions/accept-pr.md")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/review/actions/state-write.md")
+		expect(entry).toContain("REVIEW SUMMARY: verdict=<retry|accepted|skip|blocked|stop>")
+		// quality criteria are the judgment ground truth
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/quality/honesty.md")
+		expect(entry).toContain("/Users/mouriya/Ext/app/coder-loop/presets/gh-issue-pr-iteration/quality/evidence.md")
 	})
 
 	test("blocked responder prompt carries the required cross-repo side effects", async () => {

@@ -316,169 +316,204 @@ role = "plan"
 path = "plan/final.md"
 
 [[fragments]]
-id   = "iter/index"
+id   = "quality/evidence"
+role = "quality"
+path = "quality/evidence.md"
+
+[[fragments]]
+id   = "quality/honesty"
+role = "quality"
+path = "quality/honesty.md"
+
+[[fragments]]
+id   = "quality/cleanup"
+role = "quality"
+path = "quality/cleanup.md"
+
+[[fragments]]
+id   = "iter/steps/research/task"
 role = "iter"
-path = "iter/index.md"
+path = "iter/steps/research/task.md"
 
 [[fragments]]
-id   = "iter/read-context"
+id   = "iter/steps/research/report"
 role = "iter"
-path = "iter/read-context.md"
+path = "iter/steps/research/report.md"
 
 [[fragments]]
-id   = "iter/classify-scope"
+id   = "iter/steps/research/accept"
 role = "iter"
-path = "iter/classify-scope.md"
+path = "iter/steps/research/accept.md"
 
 [[fragments]]
-id   = "iter/resolve-blocker"
+id   = "iter/steps/resolve-blocker/task"
 role = "iter"
-path = "iter/resolve-blocker.md"
+path = "iter/steps/resolve-blocker/task.md"
 
 [[fragments]]
-id   = "iter/implement"
+id   = "iter/steps/resolve-blocker/report"
 role = "iter"
-path = "iter/implement.md"
+path = "iter/steps/resolve-blocker/report.md"
 
 [[fragments]]
-id   = "iter/spike-comment"
+id   = "iter/steps/resolve-blocker/accept"
 role = "iter"
-path = "iter/spike-comment.md"
+path = "iter/steps/resolve-blocker/accept.md"
 
 [[fragments]]
-id   = "iter/source-writing-spike"
+id   = "iter/steps/implement/task"
 role = "iter"
-path = "iter/source-writing-spike.md"
+path = "iter/steps/implement/task.md"
 
 [[fragments]]
-id   = "iter/verify-evidence"
+id   = "iter/steps/implement/report"
 role = "iter"
-path = "iter/verify-evidence.md"
+path = "iter/steps/implement/report.md"
 
 [[fragments]]
-id   = "iter/commit-pr"
+id   = "iter/steps/implement/accept"
 role = "iter"
-path = "iter/commit-pr.md"
+path = "iter/steps/implement/accept.md"
 
 [[fragments]]
-id   = "iter/handoff"
+id   = "iter/steps/verify/task"
 role = "iter"
-path = "iter/handoff.md"
+path = "iter/steps/verify/task.md"
 
 [[fragments]]
-id   = "iter/final"
+id   = "iter/steps/verify/report"
 role = "iter"
-path = "iter/final.md"
+path = "iter/steps/verify/report.md"
 
 [[fragments]]
-id   = "review/index"
-role = "review"
-path = "review/index.md"
+id   = "iter/steps/verify/accept"
+role = "iter"
+path = "iter/steps/verify/accept.md"
 
 [[fragments]]
-id   = "review/read-evidence"
-role = "review"
-path = "review/read-evidence.md"
+id   = "iter/steps/submit/task"
+role = "iter"
+path = "iter/steps/submit/task.md"
 
 [[fragments]]
-id   = "review/trace-honesty"
-role = "review"
-path = "review/trace-honesty.md"
+id   = "iter/steps/submit/report"
+role = "iter"
+path = "iter/steps/submit/report.md"
 
 [[fragments]]
-id   = "review/pr-protocol"
-role = "review"
-path = "review/pr-protocol.md"
+id   = "iter/steps/submit/accept"
+role = "iter"
+path = "iter/steps/submit/accept.md"
 
 [[fragments]]
-id   = "review/source-writing-spike-gate"
-role = "review"
-path = "review/source-writing-spike-gate.md"
+id   = "iter/steps/source-spike/task"
+role = "iter"
+path = "iter/steps/source-spike/task.md"
 
 [[fragments]]
-id   = "review/title-intent-gate"
-role = "review"
-path = "review/title-intent-gate.md"
+id   = "iter/steps/source-spike/report"
+role = "iter"
+path = "iter/steps/source-spike/report.md"
 
 [[fragments]]
-id   = "review/evidence-gate"
-role = "review"
-path = "review/evidence-gate.md"
+id   = "iter/steps/source-spike/accept"
+role = "iter"
+path = "iter/steps/source-spike/accept.md"
 
 [[fragments]]
-id   = "review/caveat-honesty-gate"
-role = "review"
-path = "review/caveat-honesty-gate.md"
+id   = "iter/steps/spike-comment/task"
+role = "iter"
+path = "iter/steps/spike-comment/task.md"
 
 [[fragments]]
-id   = "review/commitment-gate"
-role = "review"
-path = "review/commitment-gate.md"
+id   = "iter/steps/spike-comment/report"
+role = "iter"
+path = "iter/steps/spike-comment/report.md"
 
 [[fragments]]
-id   = "review/spike-followup-gate"
-role = "review"
-path = "review/spike-followup-gate.md"
+id   = "iter/steps/spike-comment/accept"
+role = "iter"
+path = "iter/steps/spike-comment/accept.md"
 
 [[fragments]]
-id   = "review/code-gate"
+id   = "review/steps/investigate/task"
 role = "review"
-path = "review/code-gate.md"
+path = "review/steps/investigate/task.md"
 
 [[fragments]]
-id   = "review/issue-closure-gate"
+id   = "review/steps/investigate/report"
 role = "review"
-path = "review/issue-closure-gate.md"
+path = "review/steps/investigate/report.md"
 
 [[fragments]]
-id   = "review/action-retry"
+id   = "review/steps/investigate/accept"
 role = "review"
-path = "review/action-retry.md"
+path = "review/steps/investigate/accept.md"
 
 [[fragments]]
-id   = "review/action-expand-parent"
+id   = "review/steps/replay/task"
 role = "review"
-path = "review/action-expand-parent.md"
+path = "review/steps/replay/task.md"
 
 [[fragments]]
-id   = "review/action-accept-pr"
+id   = "review/steps/replay/report"
 role = "review"
-path = "review/action-accept-pr.md"
+path = "review/steps/replay/report.md"
 
 [[fragments]]
-id   = "review/action-accept-no-pr"
+id   = "review/steps/replay/accept"
 role = "review"
-path = "review/action-accept-no-pr.md"
+path = "review/steps/replay/accept.md"
 
 [[fragments]]
-id   = "review/action-skip"
+id   = "review/spike-followup"
 role = "review"
-path = "review/action-skip.md"
+path = "review/spike-followup.md"
 
 [[fragments]]
-id   = "review/action-blocked"
+id   = "review/source-spike-audit"
 role = "review"
-path = "review/action-blocked.md"
+path = "review/source-spike-audit.md"
 
 [[fragments]]
-id   = "review/action-stop"
+id   = "review/actions/accept-pr"
 role = "review"
-path = "review/action-stop.md"
+path = "review/actions/accept-pr.md"
 
 [[fragments]]
-id   = "review/update-state"
+id   = "review/actions/accept-no-pr"
 role = "review"
-path = "review/update-state.md"
+path = "review/actions/accept-no-pr.md"
 
 [[fragments]]
-id   = "review/global-assessment"
+id   = "review/actions/retry"
 role = "review"
-path = "review/global-assessment.md"
+path = "review/actions/retry.md"
 
 [[fragments]]
-id   = "review/final"
+id   = "review/actions/expand-parent"
 role = "review"
-path = "review/final.md"
+path = "review/actions/expand-parent.md"
+
+[[fragments]]
+id   = "review/actions/skip"
+role = "review"
+path = "review/actions/skip.md"
+
+[[fragments]]
+id   = "review/actions/blocked"
+role = "review"
+path = "review/actions/blocked.md"
+
+[[fragments]]
+id   = "review/actions/stop"
+role = "review"
+path = "review/actions/stop.md"
+
+[[fragments]]
+id   = "review/actions/state-write"
+role = "review"
+path = "review/actions/state-write.md"
 
 [agent]
 binary                = "claude"

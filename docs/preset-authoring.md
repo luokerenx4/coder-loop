@@ -305,14 +305,12 @@ queue item 可加 `"runner": "claude" | "codex"` 覆盖允许 item override 的�
 
 ## 7. Agent prompt 写作约定
 
-引擎不要求 entry prompt 用任何特定结构。但 `gh-issue-pr-iteration` 用了一套约定（其他 preset 可借鉴）：
+引擎不要求 entry prompt 用任何特定结构。`gh-issue-pr-iteration` 当前用两套约定（其他 preset 可借鉴或自定义）：
 
-- 每个 fragment 文件以 `# Fragment: <id>` 起手。
-- 入口 prompt 把 `{{PROMPT_FRAGMENT_INDEX}}` 嵌入做索引，agent 按 id 读 fragment。
-- 每个 fragment 末尾有 `## Output verdict` 段，列出该 fragment 的可能出口 + 下一跳目标 fragment id。
-- agent 按 verdict 链跑，agent 输出 / events 记录每个 fragment 的 verdict 出口，review 阶段据此审查。
+- **plan 链：查表式 fragment 链**。每个 fragment 文件以 `# Fragment: <id>` 起手；入口 prompt 把 `{{PROMPT_FRAGMENT_INDEX}}` 嵌入做索引；每个 fragment 末尾有 `## Output verdict` 段（出口 + 下一跳 fragment id），agent 按 verdict 链跑。
+- **iteration / review：调度者模式**。entry md 是调度者手册（调查 → 计划 → 派 subagent → 验收 → 补缺 → 清场）；fragment 改组为步骤三件套（`task.md` 给 subagent / `report.md` 汇报模板 / `accept.md` 验收判据）与 `quality/` 品质判据；调度者 dispatch 消息只传文件指针与运行时键值。注意：fragment 文件不经引擎渲染，跨文件引用要写运行时安装位置的绝对路径。
 
-这套约定让 review agent 能从 trace 复核 iter 的 fragment 链路是否合法。换 preset 时这套不强制——你也可以让 agent 跑单一 prompt 不分 fragment。
+形态详见 `docs/gh-issue-pr-iteration-fragments.md`。换 preset 时这两套都不强制——你也可以让 agent 跑单一 prompt 不分 fragment。
 
 ---
 

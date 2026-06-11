@@ -152,7 +152,7 @@ Take classified deliverables and emit a draft issue body for each. At this fragm
 
 4. **Cite verification**. Each `## 问题` / `## 目标` / `## 背景` paragraph must trace to a source quote. Mark inline as `> "..." — <repo>#<N>` body / `<repo>@<sha>` commit. No motivation sentence without cite — if you can't cite, the issue isn't yet understood well enough.
 
-5. **Title drafting**. Per `contract.md` §1.1: single subject (no `and / + / 、 / /`), Chinese, optional conventional commit prefix. Title preview the PR title that will close this issue — they must align (`title-intent-gate` will enforce).
+5. **Title drafting**. Per `contract.md` §1.1: single subject (no `and / + / 、 / /`), Chinese, optional conventional commit prefix. Title preview the PR title that will close this issue — they must align (review's title-intent acceptance will enforce).
 
 6. **Forbidden in body**:
    - implementation solution / module structure / protocol choice / state-machine design / naming preferences (unless externally imposed by source);

@@ -2,7 +2,7 @@
 
 ## Goal
 
-For each draft body, fill in the `## 验收标准` table (and `## 结果分支` for spikes). Tables must satisfy `contract.md` §1.4 / §1.6 — column names, order, content quality — so `commitment-gate` / `spike-followup-gate` can parse them.
+For each draft body, fill in the `## 验收标准` table (and `## 结果分支` for spikes). Tables must satisfy `contract.md` §1.4 / §1.6 — column names, order, content quality — so review's contract replay / spike follow-up acceptance can parse them.
 
 ## Inputs
 
@@ -19,7 +19,7 @@ For each draft body, fill in the `## 验收标准` table (and `## 结果分支` 
    | # | Dimension | Check | Command | Env | Expect |
    |---|-----------|-------|---------|-----|--------|
    ```
-   Column count, order, names — all match. Any deviation → `commitment-gate` will refuse to parse.
+   Column count, order, names — all match. Any deviation → review's contract replay will refuse to parse.
 
 2. For every row:
    - `#` — sequential, starting at 1.
@@ -34,7 +34,7 @@ For each draft body, fill in the `## 验收标准` table (and `## 结果分支` 
    - Docker / VM / deployment / OS-specific behavior → at least one `environment` row.
    - Downstream consumer / cross-service E2E → at least one `integration` row.
    - Third-party undocumented behavior / "should work" claim → at least one `assumption` row.
-   Missing a dimension that the work actually touches → review will discover the gap during evidence-gate; pre-empt it here.
+   Missing a dimension that the work actually touches → review will discover the gap during evidence-form acceptance; pre-empt it here.
 
 4. **Adversarial inference**. For each row, ask: "what's the smallest change to source code that satisfies `Expect` without solving the user-visible problem?" If you can construct such a shortcut, the row's `Check` or `Expect` is too lax — sharpen it. (Full adversarial validation is `plan/adversarial-validate`'s job; this is the per-row first pass.)
 
@@ -69,7 +69,7 @@ For each draft body, fill in the `## 验收标准` table (and `## 结果分支` 
    - **If <其他条件>**: <动作>。<...>
    ```
    - Each branch starts with `**If <condition>**:`.
-   - For each branch, decide whether `spike-followup-gate`'s verb table is triggered:
+   - For each branch, decide whether the spike follow-up acceptance verb table is triggered:
      - branch text contains `create` / `file` / `propose` / `开` / `提议` / `创建` or names a specific follow-up type → spike comment must propose ≥ 1 concrete sub-issue title;
      - branch text says "no follow-up needed" / "no action" → 0 proposals OK.
    - Don't write `If passed: TBD` or vague placeholders; the gate will reject `vague proposals do not satisfy the minimum`.
