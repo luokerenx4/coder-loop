@@ -2372,7 +2372,7 @@ function rootUsage(): string {
 		"  status <target> --json",
 		"  daemon <up|down|status|start|stop|restart>",
 		"  chain <create|list|status|stop|resume|delete>",
-		"  item <add|batch-add|list|update>",
+		"  item <add|batch-add|list|update|reorder>",
 		"  queue unblock <target> --issue <issue>",
 		"  runtime <show|set>",
 		"  install <target>",

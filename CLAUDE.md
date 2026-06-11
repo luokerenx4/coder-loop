@@ -14,7 +14,7 @@ bundled `gh-issue-pr-iteration` preset 编码 GitHub issue/PR 两角色（iterat
 
 ```
 L1: 引擎（src/loop.ts）
-    - 加载 preset、加载 target runtime、按 phase 顺序 spawn agent、resume、--check-runtime
+    - 加载 preset、加载 target runtime、按 phase 顺序 spawn agent、resume、status 快照
     - 不知道 phase 数量 / status 字面量 / 已知 KEY / GitHub
     - 不判断 item 是否完成、PR 是否正确、证据是否充分
 
@@ -40,12 +40,9 @@ L2: Preset（presets/<name>/）
 
 - **Type check**: `bun run typecheck` (alias for `bun x tsc --noEmit`)
 - **Run unit + smoke tests**: `bun test` (覆盖 `src/loop.test.ts` + `src/smoke.test.ts`)
-- **Run orchestrator directly**: `bun run src/loop.ts [N] [--target-cwd <path>] [--once]` (core loop path; operational callers should prefer daemon)
 - **Status snapshot**: `coder-loop status <target> --json [--config <path>] [--chain <name>]` — stable read-only JSON API for supervisor/scripts; do not scrape runtime files first.
 - **Daemon operations**: `coder-loop daemon status <target> --json`, `coder-loop daemon start|restart <target> [--max-iterations N]`, `coder-loop daemon stop <target>` — stable central-daemon / target-chain control API.
 - **Runtime inspection / model config**: `coder-loop runtime show <target> [--json]` 列出 preset 所有 phase（角色）当前解析到的 runner/binary/model/source；`coder-loop runtime set <target> [--claude-model opus-4-7|opus-4-8] [--codex-model gpt-5.5]` 用枚举值幂等改写 `.coder-loop/runtime/config.json` 的 `claude.model` / `codex.model`（Claude 模型自动加 `[1m]` 后缀；TOML config 不可写）。Runner kind 归 role entry md，不是 CLI 表面。
-- **Check runtime**: `bun run src/loop.ts --target-cwd <path> --check-runtime`
-- **Dry run**: `bun run src/loop.ts --target-cwd <path> --dry-run` (渲染 + 选 item，不 spawn agent)
 - **Install target**: `coder-loop install <target> [--repo <owner/repo>] [--preset <name>] [--force] [--dry-run] [--install-skills]` — 幂等四层 bootstrap（slash commands + runtime 目录 + config + workflow.md + GitHub `kind:code`/`kind:comment`/`kind:code-spike`/`kind:blocked` 标签 + PATH/skill 检查）。源：`src/install-commands.ts`。
 - **Uninstall target**: `coder-loop uninstall <target>` — 仅删 `.claude/commands/dev-*.md`；runtime 和 GitHub labels 保留。
 - **Doctor**: `coder-loop doctor <target> [--repo <owner/repo>]` — 只读四层体检（target 文件 / GitHub 标签 / 操作员 PATH / writing-issue skill 版本）并输出 live runtime health。
@@ -77,9 +74,11 @@ Runner binary、模型与额外参数由 config 的 `claude.binary` / `claude.mo
 1. `mkdir presets/<name>/` 写 `preset.toml`（schema 见 README §「写一个新 preset」）。
 2. 给每个 phase 写一份 `<phase>-entry.md`，正文用 `{{KEY}}` 占位符引用 preset.toml `[phases.variables]` 表的 key；phase runner 写在 `preset.toml`。
 3. target 在 `.coder-loop/runtime/config.json` 写 `{ "preset": "<name>" }` 或 `{ "presetPath": "<absolute-or-relative>" }`。
-4. `bun src/loop.ts --target-cwd <target> --check-runtime` 应输出 `preset=<name>`、exit 0。
-5. `bun src/loop.ts --target-cwd <target> --dry-run` 应输出 `selected=<id>`、exit 0。
+4. `coder-loop status <target> --json` 应输出 `.target.preset.name == "<name>"` 且 `.state.kind == "ok"`。
+5. 队列加入 item 后，同一命令的 `.queue.selected.id` 应指向期望的下一个 item。
 6. 真跑前用 `doctor` 确保各 entry md 声明的 runner CLI 在 PATH 上可运行。
+
+注意：直跑 loop（`bun src/loop.ts [N] --target-cwd`）、`--check-runtime`、loop 级 `--dry-run` CLI 表面已退役（#411 推演、#425 登记）；其余文档中的残留引用等 #425 定出替代验证路径后批改。
 
 ## gh-issue-pr-iteration preset 的设计前提
 
