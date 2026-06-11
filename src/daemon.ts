@@ -825,11 +825,6 @@ export class CoderLoopDaemon {
 		return await Promise.all(activeRuns.map((run) => run.terminate({ forceAfterMs: this.shutdownGraceMs })))
 	}
 
-	private async terminateActiveRunsForItem(itemId: number): Promise<SchedulerCompletedRun[]> {
-		const activeRuns = listActiveRuns(this.schedulerState).filter((run) => run.itemId === itemId)
-		return await Promise.all(activeRuns.map((run) => run.terminate({ forceAfterMs: this.shutdownGraceMs })))
-	}
-
 	private async cleanupChainRuntime(chain: ChainRecord): Promise<JsonObject> {
 		const store = this.requireStore()
 		const repoCwds = store.listItems(chain.id).map((item) => item.repoCwd)
@@ -985,13 +980,9 @@ export class CoderLoopDaemon {
 		} else if (blockerMutation !== null) {
 			input.extra = validateItemExtra(applyBlockerMutation({ ...item.extra }, blockerMutation))
 		}
-		const terminalStatuses = await this.terminalItemStatuses(chain)
 		const resumeScheduler = await this.pauseSchedulerForMutation()
 		try {
 			const updated = store.updateItem(item.id, input)
-			if (input.status !== undefined && terminalStatuses.has(input.status)) {
-				await this.terminateActiveRunsForItem(updated.id)
-			}
 			return { item: itemToJson(updated) }
 		} finally {
 			resumeScheduler()
@@ -1190,6 +1181,10 @@ export class CoderLoopDaemon {
 		if (scheduler.maxItemAttempts !== undefined) options.maxItemAttempts = scheduler.maxItemAttempts
 		if (scheduler.spawnFailureBackoff !== undefined) options.spawnFailureBackoff = scheduler.spawnFailureBackoff
 		if (scheduler.spawnFailureBackoffForChain !== undefined) options.spawnFailureBackoffForChain = scheduler.spawnFailureBackoffForChain
+		if (scheduler.attemptTimeoutMs !== undefined) options.attemptTimeoutMs = scheduler.attemptTimeoutMs
+		if (scheduler.attemptKillMs !== undefined) options.attemptKillMs = scheduler.attemptKillMs
+		if (scheduler.watchdogGraceMs !== undefined) options.watchdogGraceMs = scheduler.watchdogGraceMs
+		if (scheduler.watchdogKillMs !== undefined) options.watchdogKillMs = scheduler.watchdogKillMs
 		if (scheduler.chainCompleteTrigger !== undefined) options.chainCompleteTrigger = scheduler.chainCompleteTrigger
 		else if (scheduler.chainCompleteTriggerForChain !== undefined) options.chainCompleteTriggerForChain = scheduler.chainCompleteTriggerForChain
 		else {

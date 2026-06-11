@@ -25,7 +25,7 @@ import {
 	type DaemonResponse,
 } from "./daemon"
 import { dispatchSubcommand } from "./install-commands"
-import { RuntimePathError, resolveChainRuntimePaths, resolveLoopDataPaths } from "./runtime-paths"
+import { RUN_ID_ENV, RuntimePathError, resolveChainRuntimePaths, resolveLoopDataPaths } from "./runtime-paths"
 import {
 	type ChainRecord,
 	type CurrentRunRecord,
@@ -399,7 +399,6 @@ const PresetPhaseBoundary = arkType({
 	name: "string",
 	prompt: "string",
 	"runner?": "string",
-	"summaryMarker?": "string",
 	"exits?": PresetPhaseExitBoundary.array(),
 	"variables?": "object",
 	"trigger?": PresetPhaseTriggerBoundary,
@@ -3802,7 +3801,7 @@ export function parsePreset(value: unknown, presetDir: string): Preset {
 		}
 		const trigger = parsePresetPhaseTrigger(entry.trigger ?? null, `preset.phases[${index}].trigger`)
 		const runner = parsePhaseRunner(entry.runner ?? null, `preset.phases[${index}].runner`)
-		const summaryMarker = parsePhaseSummaryMarker(entry.summaryMarker ?? null, `preset.phases[${index}].summaryMarker`)
+		const summaryMarker = phaseSummaryMarkerForName(entry.name)
 		const exits = parsePresetPhaseExits(entry.exits ?? [], `preset.phases[${index}].exits`)
 		if (hasOwnJsonKey(entry as JsonObject, "statusWrites")) {
 			presetError(`preset.phases[${index}].statusWrites: use [[phases.exits]] with status and when`)
@@ -3939,11 +3938,12 @@ function parsePhaseRunner(value: unknown, label: string): AgentRunnerKind | null
 	return value
 }
 
-function parsePhaseSummaryMarker(value: unknown, label: string): string | null {
-	if (value === null) return null
-	if (typeof value !== "string") presetError(`${label}: must be a string`)
-	if (value.trim() === "") presetError(`${label}: must not be empty`)
-	return value
+// summaryMarker is retired from preset.toml; the daemon scheduler uses
+// hardcoded sG7kPq2Z tags. The v1 engine still needs a marker for review
+// verdict parsing; default based on phase name.
+function phaseSummaryMarkerForName(name: string): string | null {
+	if (name === "review" || name === "review-on-empty") return "REVIEW SUMMARY:"
+	return null
 }
 
 function parsePresetPhaseExits(value: unknown, label: string): PresetPhaseExit[] {

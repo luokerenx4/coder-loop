@@ -32,12 +32,23 @@ import { detectsSessionIdInvalid } from "./runners/session-id"
 import { type ChainRecord, dependsOnItemIds, type ItemRecord, listDependencyWaitReasons, type RunRecord, type SqliteStateStore } from "./sqlite-state"
 import {
 	LOOP_DATA_ROOT_ENV,
+	RUN_ID_ENV,
 	type LoopDataRootOptions,
 	RuntimePathError,
 	resolveChainRuntimePaths,
 	resolveLoopDataPaths,
 	sanitizeChainName,
 } from "./runtime-paths"
+
+const SUMMARY_TAG = "sG7kPq2Z"
+const SUMMARY_OPEN = `<${SUMMARY_TAG}>`
+const SUMMARY_CLOSE = `</${SUMMARY_TAG}>`
+const WATCHDOG_GRACE_MS = 10 * 60 * 1000
+const WATCHDOG_KILL_MS = 5 * 1000
+const ATTEMPT_TIMEOUT_MS = 60 * 60 * 1000
+const ATTEMPT_KILL_MS = 5 * 1000
+
+const SUMMARY_INSTRUCTION = `\n\n当你完成所有工作后，用 ${SUMMARY_OPEN} 和 ${SUMMARY_CLOSE} 包裹一段总结，描述你做了什么。\n例如：\n${SUMMARY_OPEN}\n- 修复了登录页的 bug\n- 添加了单元测试\n${SUMMARY_CLOSE}`
 
 export type SchedulerActiveRun = {
 	runId: string
@@ -193,6 +204,10 @@ export type SchedulerOptions = {
 	chainCompleteTrigger?: SchedulerChainCompleteTrigger
 	chainCompleteTriggerForChain?: SchedulerChainCompleteTriggerForChain
 	onEvent?: (event: SchedulerEvent) => void | Promise<void>
+	attemptTimeoutMs?: number
+	attemptKillMs?: number
+	watchdogGraceMs?: number
+	watchdogKillMs?: number
 }
 
 export type SchedulerChainStatuses = {
@@ -714,9 +729,10 @@ async function spawnSchedulerRun(
 		resume: resumeDecision,
 		runner: runner.kind,
 	})
+	const finalPrompt = renderedPrompt + SUMMARY_INSTRUCTION
 	const runnerPlan = buildRunnerInvocation(
 		runner,
-		renderedPrompt,
+		finalPrompt,
 		resumeDecision,
 		invocationPaths(item.repoCwd, worktreePath, presetDir, resolveLoopDataPaths(options.loopDataRootOptions).root),
 	)
@@ -727,7 +743,7 @@ async function spawnSchedulerRun(
 		detached: true,
 		// The agent writes its own item status via `coder-loop item update`, which must reach
 		// the daemon that owns this loop-data-root. Pass it through so the CLI resolves the same store.
-		env: { ...process.env, [LOOP_DATA_ROOT_ENV]: resolveLoopDataPaths(options.loopDataRootOptions).root },
+		env: { ...process.env, [LOOP_DATA_ROOT_ENV]: resolveLoopDataPaths(options.loopDataRootOptions).root, [RUN_ID_ENV]: runId },
 	})
 	const activeRun = attachRunCloseHandler(options, chain, item, slot, runId, worktreePath, startedAt, phase, child, runner)
 	slot.activeRun = activeRun
@@ -789,29 +805,73 @@ function attachRunCloseHandler(
 ): SchedulerActiveRun {
 	const stdout: Buffer[] = []
 	const stderr: Buffer[] = []
+
+	const attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS
+	const attemptKillMs = options.attemptKillMs ?? ATTEMPT_KILL_MS
+	const watchdogGraceMs = options.watchdogGraceMs ?? WATCHDOG_GRACE_MS
+	const watchdogKillMs = options.watchdogKillMs ?? WATCHDOG_KILL_MS
+
+	// --- lifecycle: attempt timeout + summary watchdog ---
+	let lifecycleCleanup: (() => void) | null = null
+
 	const closed = new Promise<SchedulerCompletedRun>((resolveClosed, rejectClosed) => {
 		child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk))
 		child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk))
 		child.on("error", (error) => {
 			stderr.push(Buffer.from(error.message))
 		})
+
+		// Attempt timeout
+		let attemptTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+			attemptTimer = null
+			if (child.exitCode !== null || child.signalCode !== null) return
+			sendSignalToChildProcessGroup(child, "SIGTERM")
+			const killTimer = setTimeout(() => {
+				if (child.exitCode === null && child.signalCode === null) sendSignalToChildProcessGroup(child, "SIGKILL")
+			}, attemptKillMs)
+			lifecycleCleanup = combineCleanup(lifecycleCleanup, () => clearTimeout(killTimer))
+		}, attemptTimeoutMs)
+
+		// Summary watchdog: observe accumulated stdout for SUMMARY_CLOSE marker
+		let watchdogArmed = false
+		let watchdogAccumulated = ""
+		let watchdogGraceTimer: ReturnType<typeof setTimeout> | null = null
+		child.stdout?.on("data", (chunk: Buffer) => {
+			if (watchdogArmed) return
+			watchdogAccumulated += chunk.toString("utf-8")
+			if (watchdogAccumulated.includes(SUMMARY_CLOSE)) {
+				watchdogArmed = true
+				if (attemptTimer !== null) { clearTimeout(attemptTimer); attemptTimer = null }
+				watchdogGraceTimer = setTimeout(() => {
+					watchdogGraceTimer = null
+					if (child.exitCode !== null || child.signalCode !== null) return
+					sendSignalToChildProcessGroup(child, "SIGTERM")
+					const killTimer = setTimeout(() => {
+						if (child.exitCode === null && child.signalCode === null) sendSignalToChildProcessGroup(child, "SIGKILL")
+					}, watchdogKillMs)
+					lifecycleCleanup = combineCleanup(lifecycleCleanup, () => clearTimeout(killTimer))
+				}, watchdogGraceMs)
+				lifecycleCleanup = combineCleanup(lifecycleCleanup, () => { if (watchdogGraceTimer !== null) { clearTimeout(watchdogGraceTimer); watchdogGraceTimer = null } })
+			}
+		})
+
+		lifecycleCleanup = combineCleanup(lifecycleCleanup, () => { if (attemptTimer !== null) { clearTimeout(attemptTimer); attemptTimer = null } })
+
 		child.on("close", (code) => {
+			if (lifecycleCleanup !== null) { lifecycleCleanup(); lifecycleCleanup = null }
+
 			const pendingCloseHandler = (async (): Promise<SchedulerCompletedRun> => {
 				const exitCode = code ?? 1
 				const stdoutText = Buffer.concat(stdout).toString("utf-8")
 				const stderrText = Buffer.concat(stderr).toString("utf-8")
 				const terminalStatuses = new Set((await schedulerStatusesForChain(options, chain)).terminal)
 				const currentItem = options.store.getItem(item.id)
-				// v1 status model: the agent owns its item status and writes it explicitly via
-				// `coder-loop item update --status` during the run. The scheduler never derives status from
-				// agent stdout or exit code — it records whatever status the agent left in the DB. If the agent
-				// never wrote a terminal status the item stays continuable and the next tick re-spawns it (with
-				// backoff on a non-zero exit), so a no-op exit cannot silently terminate an item.
 				const status = (currentItem ?? item).status
 				const endedAt = nowSeconds(options)
 				const itemTransitionedToTerminal = !terminalStatuses.has(item.status) && terminalStatuses.has(status)
 				options.state.finalizingItemStatuses.set(item.id, status)
 				try {
+					const summary = extractSummaryValue(stdoutText)
 					await writeSchedulerRunCompletionArtifacts(options, {
 						runId,
 						chain,
@@ -831,7 +891,7 @@ function attachRunCloseHandler(
 						endedAt,
 						exitCode,
 						status,
-						extra: { ...(completedRun?.extra ?? {}), stdoutBytes: stdoutText.length, stderrBytes: stderrText.length },
+						extra: { ...(completedRun?.extra ?? {}), stdoutBytes: stdoutText.length, stderrBytes: stderrText.length, ...(summary !== null ? { summary } : {}) },
 					})
 
 					const currentRun = options.store.getCurrentRun(chain.id)
@@ -908,18 +968,36 @@ function attachRunCloseHandler(
 				.catch(() => undefined)
 		})
 	})
-	const terminate = createRunTerminator(child, closed)
+	const terminate = createRunTerminator(child, closed, lifecycleCleanup)
 	return { runId, pid: child.pid ?? null, itemId: item.id, chainId: chain.id, repoCwd: item.repoCwd, worktreePath, startedAt, closed, terminate }
+}
+
+function extractSummaryValue(stdoutText: string): string | null {
+	const start = stdoutText.lastIndexOf(SUMMARY_OPEN)
+	if (start === -1) return null
+	const contentStart = start + SUMMARY_OPEN.length
+	const end = stdoutText.indexOf(SUMMARY_CLOSE, contentStart)
+	if (end === -1) return null
+	return stdoutText.slice(contentStart, end).trim()
+}
+
+function combineCleanup(existing: (() => void) | null, next: () => void): () => void {
+	return () => {
+		if (existing !== null) existing()
+		next()
+	}
 }
 
 function createRunTerminator(
 	child: ReturnType<typeof spawn>,
 	closed: Promise<SchedulerCompletedRun>,
+	cleanup?: (() => void) | null,
 ): (options?: SchedulerRunTerminateOptions) => Promise<SchedulerCompletedRun> {
 	let requested = false
 	return async (options = {}) => {
 		if (!requested && child.exitCode === null && child.signalCode === null) {
 			requested = true
+			if (cleanup !== null && cleanup !== undefined) cleanup()
 			sendSignalToChildProcessGroup(child, "SIGTERM")
 			const closedBeforeForce = await promiseSettledWithin(closed, options.forceAfterMs ?? 5_000)
 			if (!closedBeforeForce && child.exitCode === null && child.signalCode === null) sendSignalToChildProcessGroup(child, "SIGKILL")
@@ -1042,8 +1120,8 @@ async function completeChainIfReady(options: SchedulerOptions, chain: ChainRecor
 		if (completionItems.length === 0) return false
 		if (!allItemsTerminalIncludingFinalizing(options, chain.id, effectiveTerminalStatuses)) return false
 		const updated = options.store.updateChain(chain.id, { status: "completed", updatedAt: nowSeconds(options) })
+		await emit(options, { type: "chain.completed", chainId: current.id, chainName: current.name, ...(runId === undefined ? {} : { runId }) })
 		cleanupSchedulerChainWorktrees(updated, completionItems.map((item) => item.repoCwd), options.loopDataRootOptions)
-		await emit(options, { type: "chain.completed", chainId: updated.id, chainName: updated.name, ...(runId === undefined ? {} : { runId }) })
 		return true
 	} finally {
 		options.state.finalizingChainIds.delete(chain.id)
@@ -1465,7 +1543,7 @@ async function spawnSchedulerReviewOnEmptyRun(
 	})
 	const runnerPlan = buildRunnerInvocation(
 		runner,
-		renderedPrompt,
+		renderedPrompt + SUMMARY_INSTRUCTION,
 		freshResume(),
 		invocationPaths(representative.repoCwd, worktreePath, presetDir, resolveLoopDataPaths(options.loopDataRootOptions).root),
 	)
@@ -1475,7 +1553,7 @@ async function spawnSchedulerReviewOnEmptyRun(
 		stdio: ["ignore", "pipe", "pipe"],
 		detached: true,
 		// Same loop-data-root passthrough as the per-item spawn so the agent's `item update` reaches this daemon.
-		env: { ...process.env, [LOOP_DATA_ROOT_ENV]: resolveLoopDataPaths(options.loopDataRootOptions).root },
+		env: { ...process.env, [LOOP_DATA_ROOT_ENV]: resolveLoopDataPaths(options.loopDataRootOptions).root, [RUN_ID_ENV]: runId },
 	})
 	const activeRun = attachReviewOnEmptyCloseHandler(
 		options,
@@ -1527,6 +1605,12 @@ function attachReviewOnEmptyCloseHandler(
 	runner: AgentRunnerSelection,
 	repoCwd: string,
 ): SchedulerActiveRun {
+	const attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS
+	const attemptKillMs = options.attemptKillMs ?? ATTEMPT_KILL_MS
+	const watchdogGraceMs = options.watchdogGraceMs ?? WATCHDOG_GRACE_MS
+	const watchdogKillMs = options.watchdogKillMs ?? WATCHDOG_KILL_MS
+
+	let lifecycleCleanup: (() => void) | null = null
 	const stdout: Buffer[] = []
 	const stderr: Buffer[] = []
 	const closed = new Promise<SchedulerCompletedRun>((resolveClosed, rejectClosed) => {
@@ -1535,7 +1619,45 @@ function attachReviewOnEmptyCloseHandler(
 		child.on("error", (error) => {
 			stderr.push(Buffer.from(error.message))
 		})
+
+		// Attempt timeout
+		let attemptTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+			attemptTimer = null
+			if (child.exitCode !== null || child.signalCode !== null) return
+			sendSignalToChildProcessGroup(child, "SIGTERM")
+			const killTimer = setTimeout(() => {
+				if (child.exitCode === null && child.signalCode === null) sendSignalToChildProcessGroup(child, "SIGKILL")
+			}, attemptKillMs)
+			lifecycleCleanup = combineCleanup(lifecycleCleanup, () => clearTimeout(killTimer))
+		}, attemptTimeoutMs)
+
+		// Summary watchdog: observe accumulated stdout for SUMMARY_CLOSE marker
+		let watchdogArmed = false
+		let watchdogAccumulated = ""
+		let watchdogGraceTimer: ReturnType<typeof setTimeout> | null = null
+		child.stdout?.on("data", (chunk: Buffer) => {
+			if (watchdogArmed) return
+			watchdogAccumulated += chunk.toString("utf-8")
+			if (watchdogAccumulated.includes(SUMMARY_CLOSE)) {
+				watchdogArmed = true
+				if (attemptTimer !== null) { clearTimeout(attemptTimer); attemptTimer = null }
+				watchdogGraceTimer = setTimeout(() => {
+					watchdogGraceTimer = null
+					if (child.exitCode !== null || child.signalCode !== null) return
+					sendSignalToChildProcessGroup(child, "SIGTERM")
+					const killTimer = setTimeout(() => {
+						if (child.exitCode === null && child.signalCode === null) sendSignalToChildProcessGroup(child, "SIGKILL")
+					}, watchdogKillMs)
+					lifecycleCleanup = combineCleanup(lifecycleCleanup, () => clearTimeout(killTimer))
+				}, watchdogGraceMs)
+				lifecycleCleanup = combineCleanup(lifecycleCleanup, () => { if (watchdogGraceTimer !== null) { clearTimeout(watchdogGraceTimer); watchdogGraceTimer = null } })
+			}
+		})
+
+		lifecycleCleanup = combineCleanup(lifecycleCleanup, () => { if (attemptTimer !== null) { clearTimeout(attemptTimer); attemptTimer = null } })
+
 		child.on("close", (code) => {
+			if (lifecycleCleanup !== null) { lifecycleCleanup(); lifecycleCleanup = null }
 			const pendingCloseHandler = (async (): Promise<SchedulerCompletedRun> => {
 				const exitCode = code ?? 1
 				const stdoutText = Buffer.concat(stdout).toString("utf-8")

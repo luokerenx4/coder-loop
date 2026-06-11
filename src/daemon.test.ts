@@ -10,6 +10,7 @@ import {
 	sendDaemonRequest,
 	startCoderLoopDaemon,
 	type CoderLoopDaemon,
+	type CoderLoopDaemonSchedulerConfig,
 	type DaemonResponse,
 } from "./daemon"
 import { buildCoderLoopStatusSnapshot, parseReviewSummaryVerdict } from "./loop"
@@ -1482,7 +1483,7 @@ describe("daemon", () => {
 		}
 	})
 
-	test("terminal item.update terminates active run and completes chain", async () => {
+	test("terminal item.update sets terminal status; active run finishes naturally, then chain completes", async () => {
 		const fixture = await startFixture("terminal-update-active-run")
 		try {
 			const chain = record(expectOk(await request(fixture, "chain.create", {
@@ -1495,7 +1496,7 @@ describe("daemon", () => {
 				chainId,
 				issueNumber: 249,
 				repoCwd: REPO_ROOT,
-				extra: { sleepMs: 5_000, exitCode: 0 },
+				extra: { sleepMs: 500, exitCode: 0 },
 			})).item)
 			const itemId = numberValue(added.id)
 			await waitFor(async () => record(expectOk(await request(fixture, "daemon.status")).daemon).activeRuns, (runs) => Array.isArray(runs) && runs.length === 1)
@@ -1512,7 +1513,9 @@ describe("daemon", () => {
 			})).item)
 
 			expect(updated).toMatchObject({ id: itemId, status: "done" })
-			expect(await readChainStatus(fixture.loopDataRoot, chainId)).toBe("completed")
+			// item.update no longer terminates the active run. The run finishes naturally,
+			// then the close handler completes the chain (item already terminal).
+			await waitFor(async () => readChainStatus(fixture.loopDataRoot, chainId), (status) => status === "completed", 10_000)
 			expect(record(expectOk(await request(fixture, "daemon.status")).daemon).activeRuns).toEqual([])
 			expect(fixture.schedulerEvents).toContainEqual(expect.objectContaining({ type: "agent.exit", itemId, status: "done" }))
 			expect(fixture.schedulerEvents).toContainEqual(expect.objectContaining({ type: "chain.completed", chainId }))
@@ -1781,7 +1784,7 @@ describe("daemon", () => {
 				chainId,
 				issueNumber: 180,
 				repoCwd: REPO_ROOT,
-				extra: { sleepMs: 5_000, exitCode: 0 },
+				extra: { sleepMs: 500, exitCode: 0 },
 			})).item)
 			await waitFor(async () => record(expectOk(await request(fixture, "daemon.status")).daemon).activeRuns, (runs) => Array.isArray(runs) && runs.length === 1)
 			const store = openSqliteStateStore({ loopDataRoot: fixture.loopDataRoot })
@@ -1796,6 +1799,9 @@ describe("daemon", () => {
 				fields: { status: "done" },
 			})).item)
 			expect(updated.status).toBe("done")
+
+			// Wait for the run to finish naturally before shutdown (item.update no longer kills it).
+			await waitFor(async () => readChainStatus(fixture.loopDataRoot, chainId), (status) => status === "completed", 10_000)
 
 			const down = await request(fixture, "daemon.down")
 			expect(down.ok).toBe(true)
@@ -2492,7 +2498,7 @@ describe("daemon", () => {
 
 const promptIndex = Bun.argv.indexOf("-p")
 const prompt = promptIndex === -1 ? "{}" : Bun.argv[promptIndex + 1] ?? "{}"
-const input = JSON.parse(prompt)
+const input = JSON.parse(prompt.split("\\n")[0] ?? prompt)
 const writeLine = (line) => Bun.write(Bun.stdout, line + "\\n")
 await appendFile(input.eventLog, JSON.stringify({ type: "start", phase: input.phase, runId: input.runId }) + "\\n")
 await new Promise((resolve) => setTimeout(resolve, input.sleepMs))
@@ -2906,9 +2912,124 @@ process.exitCode = 0
 			const fatal = records.find((entry) => entry.type === "daemon.fatal")
 			expect(fatal).toBeTruthy()
 			expect(fatal?.kind).toBe("unhandledRejection")
-			// the durable record must carry the stack, not just the message
+			// the durable record must carry the stack, not the message
 			expect(String(fatal?.error)).toContain("Error: BOOM-observability")
 			expect(String(fatal?.error)).toContain("daemon.test")
+		} finally {
+			await fixture.daemon.stop()
+		}
+	})
+
+	test("scheduler extracts summary from stdout and stores in run extra", async () => {
+		const fixture = await startFixture("summary-extraction")
+		try {
+			const chain = record(expectOk(await request(fixture, "chain.create", {
+				name: "summary-test-chain",
+				repository: "test/repo",
+			})).chain)
+			const chainId = numberValue(chain.id)
+			const summaryContent = "fixed login bug, added unit tests"
+			const summaryTagged = `<sG7kPq2Z>${summaryContent}</sG7kPq2Z>`
+			const added = record(expectOk(await request(fixture, "item.add", {
+				chainId,
+				issueNumber: 201,
+				repoCwd: REPO_ROOT,
+				extra: { sleepMs: 5, exitCode: 0, summary: summaryTagged },
+			})).item)
+			const itemId = numberValue(added.id)
+
+			const agentExit = await waitFor(
+				async () => fixture.schedulerEvents.find(
+					(e): e is Extract<SchedulerEvent, { type: "agent.exit" }> =>
+						e.type === "agent.exit" && e.itemId === itemId
+				) ?? null,
+				(e) => e !== null,
+			) as Extract<SchedulerEvent, { type: "agent.exit" }>
+			expect(agentExit.exitCode).toBe(0)
+
+			const run = await waitFor(
+				async () => {
+					const item = await readItem(fixture.loopDataRoot, chainId, 201)
+					if (item?.lastRunId === undefined || item.lastRunId === null) return null
+					return await readRun(fixture.loopDataRoot, item.lastRunId)
+				},
+				(run): run is NonNullable<typeof run> => run !== null && (run.extra as Record<string, unknown> | undefined)?.summary !== undefined,
+			)
+			expect(run).not.toBeNull()
+			expect(run!.extra).toBeDefined()
+			expect((run!.extra as Record<string, unknown>).summary).toBe(summaryContent)
+		} finally {
+			await fixture.daemon.stop()
+		}
+	})
+
+	test("watchdog kills process after summary close marker", async () => {
+		const fixture = await startFixture("watchdog-kill", {
+			schedulerConfig: { maxItemAttempts: 1, watchdogGraceMs: 100, watchdogKillMs: 10 },
+		})
+		try {
+			const chain = record(expectOk(await request(fixture, "chain.create", {
+				name: "watchdog-test-chain",
+				repository: "test/repo",
+			})).chain)
+			const chainId = numberValue(chain.id)
+			const added = record(expectOk(await request(fixture, "item.add", {
+				chainId,
+				issueNumber: 301,
+				repoCwd: REPO_ROOT,
+				extra: {
+					sleepMs: 5,
+					exitCode: 0,
+					summary: "<sG7kPq2Z>watchdog work</sG7kPq2Z>",
+					extraSleepAfterSummaryMs: 500,
+				},
+			})).item)
+			const itemId = numberValue(added.id)
+
+			const agentExit = await waitFor(
+				async () => fixture.schedulerEvents.find(
+					(e): e is Extract<SchedulerEvent, { type: "agent.exit" }> =>
+						e.type === "agent.exit" && e.itemId === itemId
+				) ?? null,
+				(e) => e !== null,
+			) as Extract<SchedulerEvent, { type: "agent.exit" }>
+			expect(agentExit.exitCode).toBe(1)
+
+			const item = await readItem(fixture.loopDataRoot, chainId, 301)
+			const run = await readRun(fixture.loopDataRoot, item?.lastRunId ?? "")
+			expect(run?.extra).toBeDefined()
+			expect((run?.extra as Record<string, unknown>).summary).toBe("watchdog work")
+		} finally {
+			await fixture.daemon.stop()
+		}
+	})
+
+	test("attempt timeout kills long-running process", async () => {
+		const fixture = await startFixture("attempt-timeout-kill", {
+			schedulerConfig: { maxItemAttempts: 1, attemptTimeoutMs: 100, attemptKillMs: 10 },
+		})
+		try {
+			const chain = record(expectOk(await request(fixture, "chain.create", {
+				name: "timeout-test-chain",
+				repository: "test/repo",
+			})).chain)
+			const chainId = numberValue(chain.id)
+			const added = record(expectOk(await request(fixture, "item.add", {
+				chainId,
+				issueNumber: 401,
+				repoCwd: REPO_ROOT,
+				extra: { sleepMs: 500, exitCode: 0 },
+			})).item)
+			const itemId = numberValue(added.id)
+
+			const agentExit = await waitFor(
+				async () => fixture.schedulerEvents.find(
+					(e): e is Extract<SchedulerEvent, { type: "agent.exit" }> =>
+						e.type === "agent.exit" && e.itemId === itemId
+				) ?? null,
+				(e) => e !== null,
+			) as Extract<SchedulerEvent, { type: "agent.exit" }>
+			expect(agentExit.exitCode).toBe(1)
 		} finally {
 			await fixture.daemon.stop()
 		}
@@ -2931,7 +3052,7 @@ async function startPhaseAdvancementFixture(name: string): Promise<PhaseAdvancem
 
 const promptIndex = Bun.argv.indexOf("-p")
 const prompt = promptIndex === -1 ? "{}" : Bun.argv[promptIndex + 1] ?? "{}"
-const input = JSON.parse(prompt)
+const input = JSON.parse(prompt.split("\\n")[0] ?? prompt)
 const writeLine = (line) => Bun.write(Bun.stdout, line + "\\n")
 await appendFile(input.eventLog, JSON.stringify({ type: "start", itemId: input.itemId, issueNumber: input.issueNumber, runId: input.runId, phase: input.phase, cwd: process.cwd() }) + "\\n")
 await new Promise((resolve) => setTimeout(resolve, input.sleepMs))
@@ -3086,6 +3207,7 @@ type FixtureOptions = {
 	worktreeManager?: SchedulerWorktreeManager
 	kindResolver?: SchedulerKindResolver
 	chainCompleteTriggerForChain?: SchedulerOptions["chainCompleteTriggerForChain"]
+	schedulerConfig?: Partial<CoderLoopDaemonSchedulerConfig>
 }
 
 function preInstallReviewOnEmptyLockByName(chainName: string, loopDataRoot: string, runId = "test-pre-installed"): void {
@@ -3120,6 +3242,7 @@ async function startFixture(name: string, options: FixtureOptions = {}): Promise
 		loopDataRoot,
 		shutdownGraceMs: 100,
 		scheduler: {
+			...(options.schedulerConfig ?? {}),
 			enabled: options.schedulerEnabled ?? true,
 			intervalMs: options.schedulerIntervalMs ?? 20,
 			runner: scheduler,
@@ -3137,6 +3260,7 @@ async function startFixture(name: string, options: FixtureOptions = {}): Promise
 					writeStatus: daemonFakeRunnerWriteStatus(phase, item.extra),
 				}
 				if (Object.prototype.hasOwnProperty.call(item.extra, "summary")) payload.summary = item.extra.summary
+				if (Object.prototype.hasOwnProperty.call(item.extra, "extraSleepAfterSummaryMs")) payload.extraSleepAfterSummaryMs = item.extra.extraSleepAfterSummaryMs
 				return JSON.stringify(payload)
 			},
 			chainCompleteTriggerForChain: options.chainCompleteTriggerForChain ?? (() => null),
@@ -3367,7 +3491,7 @@ async function writeFakeRunner(path: string): Promise<void> {
 
 const promptIndex = Bun.argv.indexOf("-p")
 const prompt = promptIndex === -1 ? "{}" : Bun.argv[promptIndex + 1] ?? "{}"
-const input = JSON.parse(prompt)
+const input = JSON.parse(prompt.split("\\n")[0] ?? prompt)
 const writeLine = (line) => Bun.write(Bun.stdout, line + "\\n")
 await appendFile(input.eventLog, JSON.stringify({ type: "start", itemId: input.itemId, issueNumber: input.issueNumber, runId: input.runId, cwd: process.cwd() }) + "\\n")
 await new Promise((resolve) => setTimeout(resolve, input.sleepMs))
@@ -3375,6 +3499,8 @@ await appendFile(input.eventLog, JSON.stringify({ type: "end", itemId: input.ite
 await writeLine("done:" + input.itemId)
 const summary = Object.prototype.hasOwnProperty.call(input, "summary") ? input.summary : "REVIEW SUMMARY: verdict=accepted; issue=#0; reason=fake-runner default"
 if (summary !== null) await writeLine(summary)
+const extraSleepAfterSummary = Object.prototype.hasOwnProperty.call(input, "extraSleepAfterSummaryMs") ? input.extraSleepAfterSummaryMs : 0
+if (extraSleepAfterSummary > 0) await new Promise((resolve) => setTimeout(resolve, extraSleepAfterSummary))
 ${FAKE_RUNNER_STATUS_WRITE_SNIPPET}
 process.exitCode = input.exitCode
 `,
