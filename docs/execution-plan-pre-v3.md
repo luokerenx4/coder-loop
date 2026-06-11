@@ -1,107 +1,77 @@
-# v3 前 issue 执行计划（波次分组）
+# v3 前 issue 执行计划（调度者手册）
 
-> 更新于 2026-06-11（第 3 版：纳入 #428/#429、#430 已关（PR #431 merged）、#432 v2 收尾线 RFC 树（#433–#436、#421 改向））。依赖边的权威来源是各 issue body 的「依赖关系」节（已双向核对、无环），编排约束（contended surface 串行）见 `#396` 的两条编排 comment 与 `#432` 的依赖图节。本文件是它们的执行视图快照——若 issue 树后续变动，以 issue 为准。
->
-> 范围：v3（#413/#418/hapi-remote-session#1）之外的全部 open issue——#396 树（#397–#410）、#411、参数收敛线独立 issue（#412、#419–#422）、#423 收尾（#424–#427）、表面退役收尾（#428/#429）、#432 v2 收尾线树（#433–#436）。docs 勘误 #414 已随 PR #415 合并关闭。
+> 更新于 2026-06-11（第 4 版：改写为调度者手册）。本文件的读者是**调度者**——负责按下方波次表启动任务区块、观察完成、推进下一波的 agent。波次表是操作员已裁决的执行顺序，**不是建议**：不得提前、不得重排、不得合并或拆分轨道。遇到本文件未覆盖的情况，停下报告操作员，不要自行变通。
 
-## 已完成
+## 运行形态（只读事实）
 
-- **#417**（agent 生命周期：双重 GC + 引擎 summary tag）— PR #423 merged 2026-06-11T00:58。preset `summaryMarker` 字段已删；衍生收尾 #424/#426（代码）、#427（docs）、#425（docs）。
-- **#430**（summary 标签改 per-run 随机 nonce）— PR #431 merged 2026-06-11。推翻 #417「硬编码共享标签」细节；#405/#427 body 已对齐该裁决。
-- **#425 的 CLAUDE.md 部分**— 操作员授权直改落地（coder-loop@5647e14）；#425 剩余范围只剩 `docs/` 与 README。
-- **#414**（docs v3 定义勘误）— PR #415 merged 2026-06-11T03:25（92986a2）。W0.5 docs 线（#425/#427）即刻解锁。
+- 调度命令是 PATH 上的 `coder-loop`（运行版）。被迭代的代码仓库是 `/Users/mouriya/Ext/code/coder-loop`（GitHub: `mouriya-s-lab/coder-loop`）。
+- 迭代由引擎自动完成：引擎会从「起点 clone」自己创建 git worktree 并在其中跑 agent。调度者不创建 worktree、不进 worktree、不改任何仓库内容。
+- **并行模型**：一条 chain 内严格串行（一次只跑一个 item）。要并行就开多条 chain，且**每条同时活跃的 chain 必须使用一份独立的起点 clone**——禁止两条活跃 chain 共用同一份 clone。
+- 起点 clone 池：lane1 = `/Users/mouriya/Ext/code/coder-loop`（主 clone）；额外轨道用 `/Users/mouriya/Ext/code/coder-loop-lane2`、`-lane3`…（不存在就 `git clone https://github.com/mouriya-s-lab/coder-loop.git <path>` 建一份）。
+
+## 每次开工前的检查
+
+1. daemon 判活：`lsof ~/.coder-loop/loop-data/daemon.sock` 必须有进程在监听。没有 → 停下报告操作员，**不要自己启动、杀或重启 daemon**。
+2. `gh auth status` 活跃账号必须是 `RiriAgent`。
+3. 本波每条轨道的起点 clone 更新到最新 main：`git -C <clone> checkout main && git -C <clone> pull --ff-only`。失败（有本地改动 / 不在 main）→ 停下报告，不要 reset。
+
+## 启动一个任务区块（轨道）
+
+一条轨道 = 一条 chain = 一份独立 clone = 波次表里的一个并行成员（单 issue，或括号内的串行组）。
+
+```sh
+# 1. 建 chain（名字约定：cl-w<波次>-<issue 号>，串行组用 cl-w<波次>-<首尾号>）
+coder-loop chain create <chain名> \
+  --config-json '{"repository":"mouriya-s-lab/coder-loop","baseBranch":"main"}' \
+  --preset gh-issue-pr-iteration --json
+
+# 2. 加 item（串行组按执行顺序逐个 add 进同一条 chain）
+coder-loop item add <chain名> --issue <N> --repo-cwd <该轨道的 clone 绝对路径> --json
+
+# 3. 启动调度
+coder-loop daemon start <该轨道的 clone 绝对路径> --chain <chain名> --json
+```
+
+## 观察与完成判定
+
+- 看进度：`coder-loop chain status <chain名> --json`（item 状态）或 `coder-loop status <clone路径> --json --chain <chain名>`。轮询间隔 ≥ 5 分钟即可，agent 一轮迭代通常几十分钟。
+- **轨道完成** = chain 的全部 item 到 `done`，且每个 item 对应的 PR 已 merged（`gh pr list -R mouriya-s-lab/coder-loop --search "<issue号>" --state merged` 核对）。
+- **异常**（item 进 `blocked`、chain 变 `stopped`、长时间无 run 推进、daemon 不再监听）→ 停止推进该轨道并报告操作员。不要 `queue unblock`、不要删 chain、不要重启任何东西。
+
+## 波次推进规则
+
+- 一个波次的**全部**轨道完成（含 PR merged）后，才允许启动下一波的任何轨道。
+- 开下一波前重做「每次开工前的检查」第 3 步（clone 更新）——上一波合并的 PR 必须进到每条新轨道的起点。
+- W1 的 #429 完成是 W2 的硬性闸门（它修正 W2 起各 issue 的验收命令），不得以「#429 不产 PR」为由放行。
 
 ## 波次表
 
-| 波次 | 并行成员 | 进入条件 / 说明 |
+| 波次 | 并行轨道（每条 ∥ 成员一条 chain；括号内串行组同一条 chain 按序 add） | 进入条件 / 说明 |
 |---|---|---|
-| W0（立即） | (#424→#426) ∥ (#421→#435) ∥ #422 | #424/#426 同改 `scheduler.ts` 串行；#421（K5 改向后：label 声明归 preset）与 #435（删 install Layer D）同改 `install-commands.ts` 串行（顺序任意）；#422（binding key 区）零交集。PR #415 已合并（92986a2），不再是 W0 成员 |
-| W0.5（已解锁） | #425 ∥ #427 | PR #415 已合并，docs 线即刻可开工；二者互不同段可并行 |
-| W1 | **#411** ∥ #428 ∥ #429 | #411 全树 log 义务落点，改动横跨 daemon/scheduler/loop，引擎代码不与任何人并行；#428（presets md 的 plan gate 改真实路径）、#429（树上验收 Command 行批改，纯 issue 维护无 PR）都只依赖 #425，零引擎代码交集。**#429 必须在 W2 开工前完成**——W2 起各实施者要读到可执行的验收行 |
-| W2 | (#412→#433) ∥ (#398→#401→#402) ∥ #399 ∥ #400 ∥ #434 | #412（schema + `handleItemAdd`）与 #433（runtime 配置收编 chain.metadata，新增 daemon handler）同 `daemon.ts` surface 串行（契约交互登记「先后任意」，排 #412 在前免 #433 重写回落源两遍）；S2 前段三连同 loader surface 内部串行；#434（workflow.md 退役：`WORKFLOW_FILE` 绑定 + preset md）与 #422 相邻非依赖（W0 已完，实施前核对 key 位置），与 #428（W1 已完）的 fragment 改动无并发 |
-| W3 | **#397** ∥ #403 ∥ #420 ∥ #436 | #397（daemon 边界，S1 链首）、#403（loader 状态集）、#420（label 摄入读侧）不同 surface；#436（install/uninstall 退役 capstone + doctor 收缩）前置 #433/#434/#435/#421 至此全部落定，主 surface 是 `install-commands.ts` 整删 + CLI dispatch + docs 收尾，与本波其余成员零交集 |
-| W4 | **#406** ∥ #408 ∥ #404 ∥ #405 | 四块不同主 surface：daemon 边界 / 装载期 capstone / presets md / verdict CLI 通道。#405 因新增 daemon handler 与 #397 同文件，错开一波 |
-| W5 | **#407** 单独 | S1 串行链：消费 #406 主体和类型，首定义 per-phase 权利段 schema |
-| W6 | #409、#410 串行任意序 | 语义可并行（各消费 #407 schema），但同 daemon 调用面 surface。#409 落地后按其凭证规则给 #433 新增的 runtime handler 补归类（两边已登记交叉） |
-| W7 | **#419** | 编排裁决排 S1 链后：身份键改动在品牌类型（#397）、凭证绑定（#406）落定之后 |
-
-## 合同漂移收口（已全部有 owner）
-
-直跑 loop / `--check-runtime` / loop 级 `--dry-run` 表面退役引发的三块漂移，第 2 版登记为「待解决」，现各有归属：
-
-- `CLAUDE.md` → 已落地（5647e14，#425 范围缩减 comment 登记）
-- `docs/` + README → #425（W0.5）
-- `presets/` 内 plan gate → #428（W1）
-- 树上 issue 验收 Command 行批改 → #429（W1，gate W2）——在它完成前，实施者遇到死命令按合同规则先修 issue 再交 PR
-
-## 波次依赖图
+| W0 | (#424→#426) ∥ (#421→#435) ∥ #422 | 立即可开，3 条轨道 |
+| W0.5 | #425 ∥ #427 | 立即可开（PR #415 已合并），2 条轨道；可与 W0 同时在跑 |
+| W1 | #411 ∥ #428 ∥ #429 | 需 W0 与 W0.5 全部完成；#429 完成是 W2 闸门 |
+| W2 | (#412→#433) ∥ (#398→#401→#402) ∥ #399 ∥ #400 ∥ #434 | 5 条轨道，需 5 份 clone |
+| W3 | #397 ∥ #403 ∥ #420 ∥ #436 | 4 条轨道 |
+| W4 | #406 ∥ #408 ∥ #404 ∥ #405 | 4 条轨道 |
+| W5 | #407 | 单轨 |
+| W6 | (#409→#410) | 一条 chain 串行（顺序可对调，但必须串行） |
+| W7 | #419 | 单轨，收尾 |
 
 ```mermaid
 flowchart LR
-  W0["W0<br/>(#424→#426) ∥ (#421→#435)<br/>∥ #422"] --> W05["W0.5（已解锁）<br/>#425 ∥ #427"]
-  W05 --> W1["W1<br/>#411 ∥ #428 ∥ #429"]
-  W0 --> W1
-  W1 --> W2["W2<br/>(#412→#433) ∥ (#398→#401→#402)<br/>∥ #399 ∥ #400 ∥ #434"]
-  W2 --> W3["W3<br/>#397 ∥ #403 ∥ #420 ∥ #436"]
-  W3 --> W4["W4<br/>#406 ∥ #408 ∥ #404 ∥ #405"]
-  W4 --> W5["W5<br/>#407"]
-  W5 --> W6["W6<br/>#409 → #410（任意序）"]
-  W6 --> W7["W7<br/>#419"]
+  W0["W0 + W0.5<br/>5 条轨道"] --> W1["W1<br/>3 条轨道"] --> W2["W2<br/>5 条轨道"] --> W3["W3<br/>4 条轨道"] --> W4["W4<br/>4 条轨道"] --> W5["W5<br/>#407"] --> W6["W6<br/>#409→#410"] --> W7["W7<br/>#419"]
 ```
 
-注：W0.5 只阻塞 docs 线与其下游（#425→#428/#429），#411 与 docs 无文件交集，W0 完成即可开工；W1 行的「∥」对 #411 成立是因为 #428/#429 不碰引擎代码。
+## 已完成（无需再调度）
 
-## issue 级依赖图（边 = body 登记的 Depends/Blocks）
+- #417（PR #423）、#430（PR #431）、#414（PR #415）已合并关闭。
+- #425 的 CLAUDE.md 部分已直改落地（5647e14），该 issue 剩余范围只剩 docs/ 与 README——照常作为 W0.5 轨道跑即可。
 
-```mermaid
-flowchart TD
-  i423["PR #423 / #417 ✅"] --> i411["#411 可观测性"]
-  i430["PR #431 / #430 ✅ nonce"] -.修正 #417 细节.-> i405
-  i415["PR #415 / #414 ✅"] --> i425["#425 docs 命令漂移"]
-  i415 --> i427["#427 docs marker 行"]
-  i425 --> i428["#428 presets plan gate"]
-  i425 --> i429["#429 验收行批改"]
-  i412["#412 per-item preset"] --> i397["#397 出边 default-deny"]
-  i412 --> i403
-  i412 --> i407
-  i397 --> i406["#406 run 凭证"] --> i407["#407 创建权"] --> i409["#409 调用面分级"]
-  i407 --> i410["#410 字段写权"]
-  i406 --> i409
-  i406 --> i410
-  i398["#398 verdict 词表"] --> i403["#403 删 fallback"]
-  i401["#401 kind 词表"] --> i403
-  i402["#402 耗尽落点"] --> i403
-  i403 --> i408["#408 DAG capstone"]
-  i397 --> i408
-  i398 --> i405["#405 verdict 走 CLI"]
-  i397 --> i404["#404 md 清洗"]
-  i398 --> i404
-  i397 --> i419["#419 物理列退役"]
-  i406 --> i419
-  i412 --> i419
-  i401 --> i420["#420 label 摄入移出"]
-  i399["#399 占位符校验"]
-  i400["#400 fragment 切片"]
-  i422["#422 runtime key 分层"]
-  i424["#424 RUN_ID_ENV 清理"] --> i426["#426 GC 重构（同文件串行）"]
+## 禁止事项
 
-  subgraph v2tail["#432 树（v2 收尾线）"]
-    i433["#433 config 收编 chain.metadata"] --> i436["#436 install 退役 capstone"]
-    i434["#434 workflow.md 退役"] --> i436
-    i435["#435 skill vendoring 退役"] --> i436
-    i421["#421 label bootstrap 归 preset（K5 改向）"] --> i436
-  end
-  i435 <-. 同改 install-commands.ts 串行 .-> i421
-  i433 <-. 契约交互·先后任意 .-> i412
-  i409 -.落地后补凭证归类.-> i433
-  i434 <-. 相邻非依赖 .-> i422
-```
-
-## 要点
-
-- **关键路径不变**：(#417 ✅) → #411 → #412 → #397 → #406 → #407 → #409/#410 → #419，仍七波；#432 树是旁支轨道，全部塞进 W0–W3 的空闲槽（#436 capstone 在 W3 收口），不拉长总时长。
-- **并行度峰值移到 W2（5 路）**。用 coder-loop 跑时，同波各路放不同 chain（slot = `(chain, repoCwd)`，同 chain 同 repo 天然串行）；串行对（#424→#426、#421→#435、#412→#433）与 S2 三连各放同一条 chain 天然串行。
-- **#429 是 W2 的软 gate**：它不阻塞任何代码，但 W2 起的实施 agent 要照验收行执行命令——死命令未批改前，每个实施者都要自己撞一次「先修 issue」。
-- **「#412 在 #411 之后」不是必要依赖边**，是总纲建议（事件发射有统一落点），登记在 #396 body 实施顺序节。「#412 在 #433 之前」同理是编排建议（#412 先按现状 config 回落实现、#433 负责迁移），两 issue comment 已登记先后任意。
-- 刻意保守、接受 rebase 成本可提前的点：#405 可提前到 W3（与 #397 同 `daemon.ts` 并发重写风险）；#409/#410 可并行（共用调用面 surface）；#433/#434 可提前到 W1（代价是与 #411 的 `loop.ts` 改动并发 rebase）。
-- #432 树与 v3（#413）无依赖；#420（label 读侧）、#419（物理列）、#409（授权分级）、#411（可观测性）都被 #432 显式划出范围，各自独立推进——#411 body 中「doctor / install 本地装载」一句的 install 部分随 #436 作废（已 comment 登记，实施时以届时 CLI 实态为准）。
+- 不修改 `~/.coder-loop/` 下任何文件；不读写 chain 的 metadata；不直接跑 `bun src/loop.ts`。
+- 不修改任何起点 clone 或引擎 worktree 里的代码、不在其中 commit/push——代码工作全部属于引擎 spawn 的 agent。
+- 不调整波次表：成员、顺序、串行/并行关系均为操作员裁决；认为有错就报告，不要改了再说。
+- 不替实施 agent 在 issue/PR 上留言、不合并 PR、不关 issue——review 与合并由工作流自身完成。
+- 本文件由操作员侧维护；issue 树变动时不要自行改写本文件。
