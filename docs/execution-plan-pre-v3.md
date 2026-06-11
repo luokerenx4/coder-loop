@@ -4,7 +4,7 @@
 
 ## 运行形态（只读事实）
 
-- 调度命令是 PATH 上的 `coder-loop`（运行版）。被迭代的代码仓库是 `/Users/mouriya/Ext/code/coder-loop`（GitHub: `mouriya-s-lab/coder-loop`）。
+- 调度命令是 PATH 上的 `coder-loop`（运行版）。被迭代的代码仓库是 `/Users/mouriya/Ext/code/coder-loop`（GitHub: `mouriya-s-lab/coder-loop`），这是两个不同的东西，不要混淆。
 - 迭代由引擎自动完成：引擎会从「起点 clone」自己创建 git worktree 并在其中跑 agent。调度者不创建 worktree、不进 worktree、不改任何仓库内容。
 - **并行模型**：一条 chain 内严格串行（一次只跑一个 item）。要并行就开多条 chain，且**每条同时活跃的 chain 必须使用一份独立的起点 clone**——禁止两条活跃 chain 共用同一份 clone。
 - 起点 clone 池：lane1 = `/Users/mouriya/Ext/code/coder-loop`（主 clone）；额外轨道用 `/Users/mouriya/Ext/code/coder-loop-lane2`、`-lane3`…（不存在就 `git clone https://github.com/mouriya-s-lab/coder-loop.git <path>` 建一份）。
