@@ -11,16 +11,37 @@ Post the validated draft bodies as GitHub issues. Link parent/child relationship
 
 ## Procedure
 
-1. **Verify `kind:*` labels exist in target repo**:
+1. **Idempotently ensure this preset's `kind:*` label assets exist in the target repo and match the declaration**.
+
+   Asset declaration:
+
+   | Name | Color | Description |
+   |---|---|---|
+   | `kind:code` | `1f883d` | `Issue 的 deliverable 是代码 PR` |
+   | `kind:comment` | `0969da` | `Issue 的 deliverable 是 PR comment / review reply` |
+   | `kind:code-spike` | `fbca04` | `Issue 的 deliverable 是 source-writing spike evidence；不走 PR merge` |
+   | `kind:blocked` | `b60205` | `Issue 的 deliverable 是解除具体阻塞条件并恢复被阻塞 loop` |
+
+   First check which declared names already exist and what metadata they currently carry:
+
    ```bash
-   gh label list --repo <owner>/<repo> --search kind:
+   gh label list --repo <owner>/<repo> --search kind: --json name,color,description
    ```
-   Expect: `kind:code`, `kind:comment`, `kind:code-spike`, and `kind:blocked` present. If absent, create them before posting issues:
+
+   Compare the output to the asset declaration above by `name`, `color`, and `description`. For each missing declared label, create exactly that label with its declared color and description. For each existing declared label whose color or description differs from the declaration, edit that label to the declared color and description. For each existing declared label that already matches the declaration, take no action. Do not create, edit, or delete labels that are not declared by this preset.
+
    ```bash
-   gh label create kind:code --repo <owner>/<repo> --color 1d76db --description "iter 写代码 → PR；deliverable 是代码变更"
-   gh label create kind:comment --repo <owner>/<repo> --color fbca04 --description "iter 写 issue comment + 必要 sub-issue；不允许 Write 代码文件"
-   gh label create kind:code-spike --repo <owner>/<repo> --color f9d0c4 --description "iter 写 source spike evidence；不允许 PR merge"
-   gh label create kind:blocked --repo <owner>/<repo> --color b60205 --description "iter 解除具体 blocked 条件并恢复被阻塞 loop"
+   gh label create kind:code --repo <owner>/<repo> --color 1f883d --description "Issue 的 deliverable 是代码 PR"
+   gh label create kind:comment --repo <owner>/<repo> --color 0969da --description "Issue 的 deliverable 是 PR comment / review reply"
+   gh label create kind:code-spike --repo <owner>/<repo> --color fbca04 --description "Issue 的 deliverable 是 source-writing spike evidence；不走 PR merge"
+   gh label create kind:blocked --repo <owner>/<repo> --color b60205 --description "Issue 的 deliverable 是解除具体阻塞条件并恢复被阻塞 loop"
+   ```
+
+   ```bash
+   gh label edit kind:code --repo <owner>/<repo> --color 1f883d --description "Issue 的 deliverable 是代码 PR"
+   gh label edit kind:comment --repo <owner>/<repo> --color 0969da --description "Issue 的 deliverable 是 PR comment / review reply"
+   gh label edit kind:code-spike --repo <owner>/<repo> --color fbca04 --description "Issue 的 deliverable 是 source-writing spike evidence；不走 PR merge"
+   gh label edit kind:blocked --repo <owner>/<repo> --color b60205 --description "Issue 的 deliverable 是解除具体阻塞条件并恢复被阻塞 loop"
    ```
 
 2. **Order of creation** matters when issues reference each other:
@@ -87,7 +108,7 @@ If `gh issue create` fails for any reason (auth, rate limit, network):
 
 If `addSubIssue` fails for a critical link (e.g. parent → child where the child can't run without parent context), record the failure but continue; the operator can re-run the GraphQL call manually. Minor link failures shouldn't block `plan/init-queue`.
 
-If a `kind:*` label is rejected (repo's label set lacks the value), bail with `creation_failed` and instruct the operator to create labels first.
+If a `kind:*` label is rejected after the ensure step, bail with `creation_failed` and record the exact label name, command, stdout, and stderr. Do not instruct the operator to create the labels first; this preset's planning agent owns the missing-label ensure step.
 
 ## Output verdict
 
